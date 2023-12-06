@@ -54,7 +54,7 @@ MISSING_CODE = {
     "ILP_R": 999,
     "LD_INDL": None,
     "MAGER": None,
-    "MBSTATE_REC": 3,
+    "MBSTATE_REC": "3",
     "MEDUC": "9",
     "M_Ht_In": 99,
     "NO_INFEC": "9",
