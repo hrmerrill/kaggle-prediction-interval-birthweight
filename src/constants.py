@@ -68,10 +68,10 @@ MISSING_CODE = {
     "PRIORLIVE": 99,
     "PRIORTERM": 99,
     "PWgt_R": 999,
-    "RDMETH_REC": 9,
+    "RDMETH_REC": "9",
     "RESTATUS": None,
     "RF_CESAR": "U",
     "RF_CESARN": 99,
     "SEX": None,
-    "WTGAIN": 99,
+    "WTGAIN": "99",
 }
