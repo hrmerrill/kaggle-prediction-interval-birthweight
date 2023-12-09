@@ -34,7 +34,7 @@ VARIABLE_TYPE = {
     "RF_CESAR": "categorical",
     "RF_CESARN": "integer",
     "SEX": "categorical",
-    "WTGAIN": "categorical",
+    "WTGAIN": "continuous",
 }
 
 MISSING_CODE = {
@@ -73,5 +73,5 @@ MISSING_CODE = {
     "RF_CESAR": "U",
     "RF_CESARN": 99,
     "SEX": None,
-    "WTGAIN": "99",
+    "WTGAIN": 99,
 }
