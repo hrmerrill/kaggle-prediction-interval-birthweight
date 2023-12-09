@@ -7,6 +7,10 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.11"
+matplotlib = "^3.8.2"
+pandas = "^2.1.4"
+numpy = "^1.26.2"
+seaborn = "^0.13.0"
 
 
 [build-system]
