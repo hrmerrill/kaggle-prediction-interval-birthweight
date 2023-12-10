@@ -2,6 +2,7 @@ from typing import List, Tuple
 
 import numpy as np
 from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.metrics import d2_pinball_score, make_scorer
 from sklearn.model_selection import GridSearchCV
 
 from kaggle_prediction_interval_birthweight.data.data_processing import LOGY_MEAN, LOGY_SD
@@ -27,14 +28,16 @@ class HistBoostRegressor:
         self.lower_regressor = GridSearchCV(
             estimator=HistGradientBoostingRegressor(loss="quantile", quantile=(1 - alpha) / 2),
             param_grid=param_grid,
-            scoring="neg_mean_squared_error",
+            scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=(1 - alpha) / 2)),
+            verbose=1,
         )
         self.upper_regressor = GridSearchCV(
             estimator=HistGradientBoostingRegressor(
                 loss="quantile", quantile=alpha + (1 - alpha) / 2
             ),
             param_grid=param_grid,
-            scoring="neg_mean_squared_error",
+            scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=alpha + (1 - alpha) / 2)),
+            verbose=1,
         )
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
