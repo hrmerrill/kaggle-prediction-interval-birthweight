@@ -125,7 +125,7 @@ class DataProcessor:
             # for the neural network, use real NAs with the expected relu layer.
             elif self.model_type == "neural network":
                 replacement = None
-            df.loc[df[feature].isin(missing), feature] = replacement
+            df.loc[df[feature].isin(missing_code), feature] = replacement
 
         return df
 
@@ -145,7 +145,7 @@ class DataProcessor:
         """
         # during the EDA, we decided to drop these
         keepers = list(set(VARIABLE_TYPE.keys()) - {"PAY", "ILP_R"})
-        df = df.drop("PAY", "ILP_R", axis=1)
+        df = df.drop(["PAY", "ILP_R"], axis=1)
 
         numeric_features = list(
             set(keepers)
@@ -153,30 +153,31 @@ class DataProcessor:
                 [
                     feature
                     for feature in VARIABLE_TYPE.keys()
-                    if "categorical" not in VARIABLE_TYPE[feature]
+                    if "categorical" in VARIABLE_TYPE[feature]
                 ]
             )
         )
         # we also decided to binarize ILLB_R, so do that here, make it a string, and remove it from
         # the list of numeric features
-        df["ILLB_R"] = (df["ILLB_R"] >= 3).astype(str)
+        df["ILLB_R"] = (df["ILLB_R"] >= np.exp(2.75)).astype(str)
         numeric_features = list(set(numeric_features) - {"ILLB_R"})
 
         df["M_Ht_In"] = df["M_Ht_In"].clip(48, 78)
 
-        x_numeric = df[numeric_features].values
         if self.model_type in ["linear regression", "neural network"]:
             for feature in ["CIG_0", "PRIORDEAD", "PRIORTERM", "RF_CESARN"]:
                 df[feature] = np.log(df[feature] + 1)
 
+        x_numeric = df[numeric_features].values
+        if self.model_type == "linear regression":
             if self.standardization_parameters is None:
                 self.standardization_parameters = {}
-                self.standardization_parameters["means"] = x_numeric.nanmean(axis=0)
+                self.standardization_parameters["means"] = np.nanmean(x_numeric, axis=0)
                 q_matrix, r_matrix = np.linalg.qr(
                     x_numeric - self.standardization_parameters["means"]
                 )
                 self.standardization_parameters["r_matrix"] = r_matrix @ np.diag(
-                    q_matrix.nanstd(axis=0)
+                    np.nanstd(q_matrix, axis=0)
                 )
 
             x_numeric = (x_numeric - self.standardization_parameters["means"]) @ np.linalg.inv(
@@ -191,13 +192,23 @@ class DataProcessor:
         if self.feature_categories is None:
             self.feature_categories = {}
             for feature in categorical_features:
-                self.feature_categories[feature] = np.sort(df[feature].unique())
+                self.feature_categories[feature] = np.sort(df[feature].dropna().unique())
 
         x_one_hot_list = []
         for feature in categorical_features:
             x_one_hot_col = OneHotEncoder(
-                categories=self.feature_categories[feature], sparse_output=False
-            ).fit_transform(df[feature])
+                categories=[self.feature_categories[feature]],
+                sparse_output=False,
+                drop=None,
+                handle_unknown="ignore",
+            ).fit_transform(df[feature].values.reshape((-1, 1)))
+
+            # put NAs back for the neural network
+            if self.model_type == "neural network":
+                x_one_hot_col = x_one_hot_col * np.where(df[feature].isna(), np.nan, 1.0).reshape(
+                    -1, 1
+                )
+
             x_one_hot_list.append(x_one_hot_col)
         x_one_hot = np.hstack(x_one_hot_list)
 
