@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -10,6 +10,9 @@ from kaggle_prediction_interval_birthweight.model.constants import MISSING_CODE,
 TIMESTAMP_COL_NAME = "DOB_TT"
 Y_MEAN = 3260
 Y_SD = 590
+
+LOGY_MEAN = 8
+LOGY_SD = 0.25
 
 
 class DataProcessor:
@@ -147,6 +150,20 @@ class DataProcessor:
         keepers = list(set(VARIABLE_TYPE.keys()) - {"PAY", "ILP_R"})
         df = df.drop(["PAY", "ILP_R"], axis=1)
 
+        # we also added a polynomial effect for one feature
+        df["ILOP_R_2"] = df["ILOP_R"] ** 2
+        df["ILOP_R_3"] = df["ILOP_R"] ** 3
+        keepers = keepers + ["ILOP_R_2", "ILOP_R_3"]
+
+        # NaNs and medians are taken care of, but for the tree-based model, use the missing code
+        if self.model_type == "xgboost":
+            df.loc[df["ILOP_R"].isin(MISSING_CODE["ILOP_R"]), "ILOP_R_2"] = MISSING_CODE["ILOP_R"][
+                0
+            ]
+            df.loc[df["ILOP_R"].isin(MISSING_CODE["ILOP_R"]), "ILOP_R_3"] = MISSING_CODE["ILOP_R"][
+                0
+            ]
+
         numeric_features = list(
             set(keepers)
             - set(
@@ -261,7 +278,7 @@ class DataProcessor:
         x_one_hot = np.hstack(x_one_hot_list)
         return x_one_hot
 
-    def __call__(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
+    def __call__(self, df: pd.DataFrame) -> Union[Tuple[np.ndarray, np.ndarray], np.ndarray]:
         """
         Prepare data.
 
@@ -272,7 +289,7 @@ class DataProcessor:
 
         Returns
         -------
-        Tuple
+        Tuple or np.ndarray
             the design matrix X and the response variable y, if present.
         """
         df = self._enforce_feature_types(df)
@@ -282,7 +299,11 @@ class DataProcessor:
         X_categorical = self._prepare_categorical_features(df)
 
         if "DBWT" in df.columns:
-            y = (df["DBWT"].values.reshape((-1, 1)) - Y_MEAN) / Y_SD
+            if self.model_type == "linear regression":
+                y = (df["DBWT"].values.reshape((-1, 1)) - Y_MEAN) / Y_SD
+            else:
+                y = (np.log(df["DBWT"]).values.reshape((-1, 1)) - LOGY_MEAN) / LOGY_SD
+
             return np.hstack([X_numeric, X_categorical]), y
         else:
             return np.hstack([X_numeric, X_categorical])
