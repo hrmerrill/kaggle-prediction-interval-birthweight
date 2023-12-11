@@ -1,3 +1,4 @@
+import warnings
 from datetime import datetime
 from typing import Dict, Optional, Tuple, Union
 
@@ -262,12 +263,16 @@ class DataProcessor:
 
         x_one_hot_list = []
         for feature in self.categorical_features:
-            x_one_hot_col = OneHotEncoder(
-                categories=[self.feature_categories[feature]],
-                sparse_output=False,
-                drop=None if self.model_type == "linear regression" else "first",
-                handle_unknown="ignore",
-            ).fit_transform(df[feature].values.reshape((-1, 1)))
+            # the OneHotEncoder raises warnings when encoding NaNs as zeros. It's noisy.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+
+                x_one_hot_col = OneHotEncoder(
+                    categories=[self.feature_categories[feature]],
+                    sparse_output=False,
+                    drop=None if self.model_type == "linear regression" else "first",
+                    handle_unknown="ignore",
+                ).fit_transform(df[feature].values.reshape((-1, 1)))
 
             # put NAs back for the neural network
             if self.model_type == "neural network":

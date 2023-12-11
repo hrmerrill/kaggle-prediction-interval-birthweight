@@ -9,8 +9,14 @@ EM algorithm: https://arxiv.org/pdf/1209.0521.pdf and https://arxiv.org/pdf/1902
 
 from typing import Optional, Tuple
 
+import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
+
+from kaggle_prediction_interval_birthweight.data.data_processing import LOGY_MEAN, LOGY_SD
+from kaggle_prediction_interval_birthweight.model.sampling_utils import (
+    compute_highest_density_interval,
+)
 
 TFPI = tf.constant(3.14159265359, dtype=tf.float32)
 
@@ -69,22 +75,31 @@ def expected_relu(mu: tf.Tensor, sigma_sq: tf.Tensor) -> tf.Tensor:
     w = tf.divide(mu, sqrt_sigma)
     expected_relu_values = sqrt_sigma * (
         tf.divide(
-            tf.exp(tf.divide(-tf.square(w), 2.0)),
-            tf.math.sqrt(tf.constant(2 * TFPI, dtype=tf.float32)),
+            tf.math.exp(tf.divide(-tf.square(w), 2.0)),
+            tf.math.sqrt(2 * TFPI),
         )
         + tf.multiply(
             tf.divide(w, 2.0),
             1 + tf.math.erf(tf.divide(w, tf.math.sqrt(tf.constant(2, dtype=tf.float32)))),
         )
     )
-    expected_relu_values = tf.where(where_missing, expected_relu_values, (mu + tf.abs(mu)) / 2.0)
+    expected_relu_values = tf.where(
+        where_missing, expected_relu_values, (mu + tf.math.abs(mu)) / 2.0
+    )
     return expected_relu_values
 
 
 class DenseMissing(tf.keras.layers.Layer):
     """Extend the Dense layer to handle missing data."""
 
-    def __init__(self, n_units: int, n_components: int = 3, gamma: float = 1e-6, **kwargs) -> None:
+    def __init__(
+        self,
+        n_units: int,
+        n_components: int = 3,
+        gamma: float = 1e-6,
+        l2_penalty: float = 0.01,
+        **kwargs
+    ) -> None:
         """
         Parameters
         ----------
@@ -94,6 +109,8 @@ class DenseMissing(tf.keras.layers.Layer):
             number of components of the gaussian mixture distribution
         gamma: float
             regularization value for variance estimates
+        l2_penalty: float
+            the L2 penalty applied to the kernel parameters
         kwargs: dict
             other arguments passed to tf.keras.layers.Layer
         """
@@ -101,6 +118,7 @@ class DenseMissing(tf.keras.layers.Layer):
         self.n_units = n_units
         self.n_components = n_components
         self.gamma = gamma
+        self.l2_penalty = l2_penalty
         self.iteration = 0
 
     def compute_output_shape(self, input_shape: Tuple[int]) -> Tuple[int]:
@@ -130,12 +148,12 @@ class DenseMissing(tf.keras.layers.Layer):
         """
         super(DenseMissing, self).build(input_shape)
         self.component_means = tf.Variable(
-            tf.zeros((input_shape[:-1], self.n_components), dtype=tf.float32),
+            tf.zeros((input_shape[-1], self.n_components), dtype=tf.float32),
             trainable=False,
             name="component_means",
         )
         self.component_vars = tf.Variable(
-            tf.ones((input_shape[:-1], self.n_components), dtype=tf.float32),
+            tf.ones((input_shape[-1], self.n_components), dtype=tf.float32),
             trainable=False,
             name="component_vars",
         )
@@ -147,6 +165,7 @@ class DenseMissing(tf.keras.layers.Layer):
         self.kernel = self.add_weight(
             shape=(input_shape[-1], self.n_units),
             trainable=True,
+            regularizer=tf.keras.regularizers.L2(self.l2_penalty),
             name="kernel",
         )
         self.bias = self.add_weight(
@@ -254,7 +273,16 @@ class DenseMissing(tf.keras.layers.Layer):
 class BayesianNeuralNet:
     """Class for bayesian neural network that can handle missing values."""
 
-    def __init__(self, n_units: int, n_layers: int = 1) -> None:
+    def __init__(
+        self,
+        n_units: int,
+        n_layers: int = 1,
+        n_components: int = 5,
+        l2_penalty: float = 0.01,
+        batch_size: int = 100,
+        n_epochs: int = 50,
+        verbose: int = 0,
+    ) -> None:
         """
         Parameters
         ----------
@@ -262,9 +290,22 @@ class BayesianNeuralNet:
             number of units in each hidden layer
         n_layers: int
             number of hidden layers (does not include input features or final output layer)
+        n_components: int
+            number of components of the gaussian mixture distribution of the DenseMissing layer
+        l2_penalty: float
+            the L2 penalty applied to the kernel parameters of each deterministic layer
+        batch_size: int
+            minibatch size for gradient descent
+        n_epochs: int
+            number of epochs for training the model
         """
         self.n_units = n_units
         self.n_layers = n_layers
+        self.n_components = n_components
+        self.l2_penalty = l2_penalty
+        self.batch_size = batch_size
+        self.n_epochs = n_epochs
+        self.verbose = verbose
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         """
@@ -277,33 +318,81 @@ class BayesianNeuralNet:
         y: np.ndarray
             Array of response values
         """
-        self.model = tf.keras.Sequential()
-        self.model.add(tf.keras.layers.Input(shape=(X.shape[1],)))
+        input_layer = tf.keras.layers.Input(shape=(X.shape[-1],))
 
         # first layer must be DenseMissing to accomodate missing values
-        self.model.add(DenseMissing(n_units=self.n_units))
+        next_layer = DenseMissing(
+            n_units=self.n_units, n_components=self.n_components, l2_penalty=self.l2_penalty
+        )(input_layer)
+
         if self.n_layers > 1:
-            self.model.add(tfp.layers.DenseFlipout(units=self.n_units, activation="relu"))
+            for layer in range(self.n_layers - 1):
+                next_layer = tf.keras.layers.Dense(
+                    units=int(self.n_units / (4 ** (layer + 1))), activation="relu"
+                )(next_layer)
 
-        # the last layer is the probabilistic DenseFlipout layer, with two outputs-- one
-        # each for the mean and the standard deviation of a normal distribution
-        self.model.add(tfp.layers.DenseFlipout(units=2), activation="linear")
-        self.model.add(
-            tfp.layers.DistributionLambda(
-                lambda x: tfp.distributions.Normal(
-                    loc=x[:, 0], scale=1e-3 + tf.math.softplus(x[:, 1]), name="output_layer"
-                )
+        # the final layer for the point predictions
+        output_layer = tf.keras.layers.Dense(units=1, activation="linear")(next_layer)
+
+        # now create a small model for heterskedastic variances
+        scale_layer = DenseMissing(
+            n_units=1, n_components=self.n_components, l2_penalty=self.l2_penalty
+        )(input_layer)
+
+        # the last layer is the probabilistic Normal layer
+        final_layer = tfp.layers.DistributionLambda(
+            lambda x: tfp.distributions.Normal(
+                loc=x[:, 0], scale=1e-6 + tf.math.softplus(x[:, 1]), name="output_layer"
             )
-        )
+        )(tf.concat([output_layer, scale_layer], axis=1))
 
+        self.model = tf.keras.models.Model(input_layer, final_layer)
         self.model.compile(
-            optimizer=tf.optimizers.Adam(
-                learning_rate=tf.optimizers.schedules.PolynomialDecay(
-                    initial_learning_rate=0.01,
-                    decay_steps=10000,
-                    end_learning_rate=0.00001,
+            optimizer=tf.keras.optimizers.legacy.Adam(
+                learning_rate=tf.optimizers.schedules.CosineDecay(
+                    initial_learning_rate=0.0001,
+                    warmup_target=0.0004,
+                    warmup_steps=int(X.shape[0] / self.batch_size * self.n_epochs / 3),
+                    decay_steps=int(2 * X.shape[0] / self.batch_size * self.n_epochs / 3),
+                    alpha=0.0,
                 )
             ),
             loss=lambda y, p_y: -p_y.log_prob(y),
         )
-        self.model.fit(x=X, y=y, batch_size=100, epochs=100)
+        self.model.fit(
+            x=X,
+            y=y,
+            batch_size=self.batch_size,
+            epochs=self.n_epochs,
+            verbose=self.verbose,
+            shuffle=True,
+        )
+
+    def predict_intervals(
+        self, X: np.ndarray, alpha: float = 0.9, n_samples: int = 1000
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Predict the alpha * 100% interval for birthweight.
+
+        Parameters
+        ----------
+        X: np.ndarray
+            the design matrix used by self.fit(X, y)
+        n_samples: int
+            the number of samples to draw from the posterior distribution
+        alpha: float
+            the confidence level of the desired prediction interval
+
+        Returns
+        -------
+        Tuple
+            the arrays corresponding to the lower and upper bounds, respectively
+        """
+        predicted_samples = self.model(X).sample(n_samples).numpy()
+        predicted_samples = np.exp(predicted_samples * LOGY_SD + LOGY_MEAN)
+        lower, upper = np.apply_along_axis(
+            func1d=lambda x: compute_highest_density_interval(x, alpha=alpha),
+            axis=0,
+            arr=predicted_samples,
+        )
+        return lower, upper
