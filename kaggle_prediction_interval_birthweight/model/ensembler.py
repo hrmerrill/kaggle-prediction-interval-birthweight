@@ -9,6 +9,7 @@ from sklearn.model_selection import GridSearchCV
 from kaggle_prediction_interval_birthweight.data.data_processing import DataProcessor
 from kaggle_prediction_interval_birthweight.model.hist_gradient_boosting import HistBoostRegressor
 from kaggle_prediction_interval_birthweight.model.linear_regression import RidgeRegressor
+from kaggle_prediction_interval_birthweight.model.neural_network import MissingnessNeuralNet
 
 
 class Ensembler:
@@ -29,6 +30,7 @@ class Ensembler:
         self.n_folds = n_folds
         self.histboosters = [HistBoostRegressor(alpha) for _ in range(n_folds)]
         self.ridge_regressors = [RidgeRegressor() for _ in range(n_folds)]
+        self.neural_networks = [MissingnessNeuralNet() for _ in range(n_folds)]
         self.lower_regressor = GridSearchCV(
             estimator=HistGradientBoostingRegressor(quantile=(1 - alpha) / 2, loss="quantile"),
             param_grid={"l2_regularization": [10**x for x in np.linspace(-4, 1, 15)]},
@@ -58,12 +60,21 @@ class Ensembler:
         # save the data processors, so standardization parameters are available later
         self.ridge_data_processor = DataProcessor(model_type="linear regression")
         self.boost_data_processor = DataProcessor(model_type="xgboost")
+        self.nn_data_processor = DataProcessor(model_type="neural network")
         _ = self.ridge_data_processor(df)
         _ = self.boost_data_processor(df)
+        _ = self.nn_data_processor(df)
 
         # create some information for holding new data in the data frame
         df["fold"] = np.random.choice(self.n_folds, df.shape[0])
-        upstream_predictions = ["lower_ridge", "upper_ridge", "lower_boost", "upper_boost"]
+        upstream_predictions = [
+            "lower_ridge",
+            "upper_ridge",
+            "lower_boost",
+            "upper_boost",
+            "lower_nn",
+            "upper_nn",
+        ]
         for feature in upstream_predictions:
             df[feature] = None
 
@@ -82,6 +93,9 @@ class Ensembler:
             xb_train, yb_train = self.boost_data_processor(df_train)
             xb_test = self.boost_data_processor(df_test.drop("DBWT", axis=1))
 
+            xn_train, yn_train = self.nn_data_processor(df_train)
+            xn_test = self.nn_data_processor(df_test.drop("DBWT", axis=1))
+
             print("Training the ridge regression model.")
             self.ridge_regressors[k].fit(xr_train, yr_train)
             ridge_lower, ridge_upper = self.ridge_regressors[k].predict_intervals(
@@ -95,6 +109,14 @@ class Ensembler:
             boost_lower, boost_upper = self.histboosters[k].predict_intervals(xb_test)
             df.loc[df["fold"] == k, "lower_boost"] = boost_lower.squeeze()
             df.loc[df["fold"] == k, "upper_boost"] = boost_upper.squeeze()
+
+            print("Training the neural network model.")
+            self.neural_networks[k].fit(xn_train, yn_train)
+            nn_lower, nn_upper = self.neural_networks[k].predict_intervals(
+                xn_test, alpha=self.alpha
+            )
+            df.loc[df["fold"] == k, "lower_nn"] = nn_lower.squeeze()
+            df.loc[df["fold"] == k, "upper_nn"] = nn_upper.squeeze()
 
         print("Training the ensemble model.")
 
@@ -123,17 +145,21 @@ class Ensembler:
 
         xr = self.ridge_data_processor(df.drop("DBWT", axis=1))
         xb = self.boost_data_processor(df.drop("DBWT", axis=1))
+        xn = self.nn_data_processor(df.drop("DBWT", axis=1))
 
         lowers, uppers = [], []
         for k in range(self.n_folds):
             rl, ru = self.ridge_regressors[k].predict_intervals(xr)
             hl, hu = self.histboosters[k].predict_intervals(xb)
+            nl, nu = self.neural_networks[k].predict_intervals(xn)
             x = np.hstack(
                 [
                     rl.reshape((-1, 1)),
                     ru.reshape((-1, 1)),
                     hl.reshape((-1, 1)),
                     hu.reshape((-1, 1)),
+                    nl.reshape((-1, 1)),
+                    nu.reshape((-1, 1)),
                 ]
             )
             lower = self.lower_regressor.predict(x)

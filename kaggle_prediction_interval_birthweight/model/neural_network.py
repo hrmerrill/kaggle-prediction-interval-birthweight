@@ -12,7 +12,6 @@ from typing import Optional, Tuple
 import numpy as np
 import scipy.stats as st
 import tensorflow as tf
-import tensorflow_probability as tfp
 
 from kaggle_prediction_interval_birthweight.data.data_processing import LOGY_MEAN, LOGY_SD
 from kaggle_prediction_interval_birthweight.model.sampling_utils import (
@@ -272,33 +271,38 @@ class DenseMissing(tf.keras.layers.Layer):
 
 
 @tf.function
-def nois(y_true: tf.Tensor, y_pred: tf.Tensor, alpha: float = 0.9) -> tf.Tensor:
+def shash_loss(y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
     """
-    Compute the negatively oriented interval score (NOIS or WIS)
+    Compute the negative log-likelihood of the SHASH distribution.
 
     Parameters
     ----------
     y_true: tf.Tensor
-        observations
+        Observation tensor
     y_pred: tf.Tensor
-        predicted intervals (2 columns)
-    alpha: float
-        the significance level for the predicted intervals
+        Predictions for each SHASH parameter (four columns)
 
     Returns
     -------
     tf.Tensor
-        the NOIS for each row
+        SHASH negative log-likelihood
     """
-    y_lower = y_pred[:, 0]
-    y_upper = y_pred[:, 1]
-    width = y_upper - y_lower
-    penalty = tf.where(
-        y_true > y_upper,
-        (2 / alpha) * (y_true - y_upper),
-        tf.where(y_true < y_lower, (2 / alpha) * (y_lower - y_true), 0),
+    center = y_pred[:, 0]
+    spread = y_pred[:, 1] + 1e-6
+    skew = y_pred[:, 2]
+    tail = y_pred[:, 3] + 1e-6
+    z = (y_true[:, 0] - center) / (spread * tail)
+    sz = tf.math.sinh(tail * tf.math.asinh(z) - skew)
+    lcz = tf.math.log(1.0 + sz**2.0) / 2.0
+    llk = (
+        lcz
+        - (sz**2.0) / 2.0
+        - tf.math.log(spread)
+        - tf.math.log(2.0 * TFPI) / 2.0
+        - tf.math.log(1.0 + z**2.0) / 2.0
     )
-    return width + penalty
+
+    return -llk
 
 
 class MissingnessNeuralNet:
@@ -306,12 +310,11 @@ class MissingnessNeuralNet:
 
     def __init__(
         self,
-        units: int,
-        alpha: float = 0.9,
-        n_layers: int = 1,
+        units: int = 10,
+        n_layers: int = 2,
         n_components: int = 5,
         batch_size: int = 1000,
-        n_epochs: int = 50,
+        n_epochs: int = 200,
         verbose: int = 0,
     ) -> None:
         """
@@ -319,8 +322,6 @@ class MissingnessNeuralNet:
         ----------
         units: int
             number of units in each hidden layer
-        alpha: float
-            the significance level of the intervals to predict
         n_layers: int
             number of hidden layers (does not include input features or final output layer)
         n_components: int
@@ -329,9 +330,10 @@ class MissingnessNeuralNet:
             minibatch size for gradient descent
         n_epochs: int
             number of epochs for training the model
+        verbose: bool
+            controls the verbosity during training (passed to tf.model.fit())
         """
         self.units = units
-        self.alpha = alpha
         self.n_layers = n_layers
         self.n_components = n_components
         self.batch_size = batch_size
@@ -353,12 +355,8 @@ class MissingnessNeuralNet:
         # first layer must be DenseMissing to accomodate missing values
         if missingness_present:
             next_output = DenseMissing(units=self.units, n_components=self.n_components)(inputs)
-            lower_half = DenseMissing(units=1, n_components=self.n_components)(inputs)
-            upper_half = DenseMissing(units=1, n_components=self.n_components)(inputs)
         else:
             next_output = tf.keras.layers.Dense(units=self.units, activation=tf.nn.relu)(inputs)
-            lower_half = tf.keras.layers.Dense(units=1, activation=tf.nn.relu)(inputs)
-            upper_half = tf.keras.layers.Dense(units=1, activation=tf.nn.relu)(inputs)
 
         if self.n_layers > 1:
             for layer in range(self.n_layers - 1):
@@ -367,11 +365,12 @@ class MissingnessNeuralNet:
                     units=int(self.units / (2 ** (layer + 1))), activation=tf.nn.relu
                 )(next_output)
 
-        # the final layers for the mean, lower bound and upper bound
+        # the final layers for the mean, scale, skew and tail parameters
         pred_mean = tf.keras.layers.Dense(units=1, activation="linear")(next_output)
-        lower_bound = pred_mean - lower_half
-        upper_bound = pred_mean + upper_half
-        output_layer = tf.keras.layers.Concatenate()([lower_bound, upper_bound, pred_mean])
+        pred_scale = tf.keras.layers.Dense(units=1, activation=tf.math.softplus)(next_output)
+        pred_skew = tf.keras.layers.Dense(units=1, activation="linear")(next_output)
+        pred_tail = tf.keras.layers.Dense(units=1, activation=tf.math.softplus)(next_output)
+        output_layer = tf.keras.layers.Concatenate()([pred_mean, pred_scale, pred_skew, pred_tail])
 
         self.model = tf.keras.models.Model(inputs=inputs, outputs=output_layer)
         self.model.compile(
@@ -384,7 +383,7 @@ class MissingnessNeuralNet:
                     alpha=0.0,
                 )
             ),
-            loss=lambda y, p_y: nois(y, p_y[:, :-1], alpha=self.alpha) + (y[:, 0] - p_y[:, 2]) ** 2,
+            loss=shash_loss,
         )
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
@@ -408,7 +407,7 @@ class MissingnessNeuralNet:
             shuffle=True,
         )
 
-    def predict_intervals(self, X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def predict_intervals(self, X: np.ndarray, alpha: float = 0.9) -> Tuple[np.ndarray, np.ndarray]:
         """
         Predict the alpha * 100% interval for birthweight.
 
@@ -416,11 +415,25 @@ class MissingnessNeuralNet:
         ----------
         X: np.ndarray
             the design matrix used by self.fit(X, y)
+        alpha: float
+            the significance level of the predicted intervals
 
         Returns
         -------
         Tuple
             the arrays corresponding to the lower and upper bounds, respectively
         """
-        predictions = np.exp(self.model.predict(X) * LOGY_SD + LOGY_MEAN)
-        return predictions[:, 0], predictions[:, 1]
+        predictions = self.model.predict(X)
+        center = predictions[:, 0]
+        spread = predictions[:, 1] + 1e-6
+        skew = predictions[:, 2]
+        tail = predictions[:, 3] + 1e-6
+
+        lower = center + (tail * spread) * np.sinh(
+            (1 / tail) * np.arcsinh(st.norm.ppf((1 - alpha) / 2)) + skew / tail
+        )
+        upper = center + (tail * spread) * np.sinh(
+            (1 / tail) * np.arcsinh(st.norm.ppf(alpha + (1 - alpha) / 2)) + skew / tail
+        )
+
+        return np.exp(lower * LOGY_SD + LOGY_MEAN), np.exp(upper * LOGY_SD + LOGY_MEAN)
