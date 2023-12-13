@@ -29,8 +29,8 @@ class DataProcessor:
         Parameters
         ----------
         model_type: str
-            One of "linear regression", "xgboost", or "neural network". Determines how data are
-            imputed and standardized before modeling.
+            One of "RidgeRegressor", "HistBoostRegressor", or "MissingnessNeuralNet". Determines
+            how data are imputed and standardized before modeling.
         standardization_parameters: Dict
             Precomputed columnwise means and sds or decorrelation matrix, if already computed.
             None during training, but at test time these values should be passed in.
@@ -38,7 +38,7 @@ class DataProcessor:
             levels of categorical variables. None during training (they are inferred), but at
             test time these values should be passed in.
         """
-        allowed_model_types = ["linear regression", "xgboost", "neural network"]
+        allowed_model_types = ["RidgeRegressor", "HistBoostRegressor", "MissingnessNeuralNet"]
         if model_type not in allowed_model_types:
             raise NotImplementedError(f"Supported model_type values: {allowed_model_types}")
         self.model_type = model_type
@@ -103,7 +103,7 @@ class DataProcessor:
             The same data frame with missing data processed according to self.model_type.
         """
         # for tree-based models, just use the missingness codes.
-        if self.model_type == "xgboost":
+        if self.model_type == "HistBoostRegressor":
             return df
 
         for feature in MISSING_CODE.keys():
@@ -120,14 +120,14 @@ class DataProcessor:
             )
 
             # for linear regression, impute with something reasonable-- medians and modes.
-            if self.model_type == "linear regression":
+            if self.model_type == "RidgeRegressor":
                 if "categorical" in VARIABLE_TYPE[feature]:
                     replacement = df.loc[~df[feature].isin(missing_code), feature].mode()
                 else:
                     replacement = df.loc[~df[feature].isin(missing_code), feature].median()
 
             # for the neural network, use real NAs with the expected relu layer.
-            elif self.model_type == "neural network":
+            elif self.model_type == "MissingnessNeuralNet":
                 replacement = None
             df.loc[df[feature].isin(missing_code), feature] = replacement
 
@@ -157,7 +157,7 @@ class DataProcessor:
         keepers = keepers + ["ILOP_R_2", "ILOP_R_3"]
 
         # NaNs and medians are taken care of, but for the tree-based model, use the missing code
-        if self.model_type == "xgboost":
+        if self.model_type == "HistBoostRegressor":
             df.loc[df["ILOP_R"].isin(MISSING_CODE["ILOP_R"]), "ILOP_R_2"] = MISSING_CODE["ILOP_R"][
                 0
             ]
@@ -203,14 +203,14 @@ class DataProcessor:
             The array of transformed numerical features.
         """
         # for regression and neural networks, unskew those four features
-        if self.model_type in ["linear regression", "neural network"]:
+        if self.model_type in ["RidgeRegressor", "MissingnessNeuralNet"]:
             for feature in ["CIG_0", "PRIORDEAD", "PRIORTERM", "RF_CESARN"]:
                 df[feature] = np.log(df[feature] + 1)
 
         x_numeric = df[self.numeric_features].values
 
         # for the linear regression, we will decorrelate the continuous features
-        if self.model_type == "linear regression":
+        if self.model_type == "RidgeRegressor":
             if self.standardization_parameters is None:
                 self.standardization_parameters = {}
                 self.standardization_parameters["means"] = x_numeric.mean(axis=0)
@@ -226,7 +226,7 @@ class DataProcessor:
             )
 
         # for the neural network, we will standardize without decorrelating
-        elif self.model_type == "neural network":
+        elif self.model_type == "MissingnessNeuralNet":
             if self.standardization_parameters is None:
                 self.standardization_parameters = {}
                 self.standardization_parameters["means"] = np.nanmean(x_numeric, axis=0)
@@ -237,7 +237,7 @@ class DataProcessor:
             ) / self.standardization_parameters["sds"]
 
         # tell the neural network where the missing data are
-        if self.model_type == "neural network":
+        if self.model_type == "MissingnessNeuralNet":
             x_numeric = np.hstack([x_numeric, np.where(np.isnan(x_numeric), 1, 0)])
 
         return x_numeric
@@ -270,12 +270,12 @@ class DataProcessor:
                 x_one_hot_col = OneHotEncoder(
                     categories=[self.feature_categories[feature]],
                     sparse_output=False,
-                    drop=None if self.model_type == "linear regression" else "first",
+                    drop=None if self.model_type == "RidgeRegressor" else "first",
                     handle_unknown="ignore",
                 ).fit_transform(df[feature].values.reshape((-1, 1)))
 
             # put NAs back for the neural network
-            if self.model_type == "neural network":
+            if self.model_type == "MissingnessNeuralNet":
                 x_one_hot_col = x_one_hot_col * np.where(df[feature].isna(), np.nan, 1.0).reshape(
                     (-1, 1)
                 )
@@ -304,7 +304,7 @@ class DataProcessor:
         X_categorical = self._prepare_categorical_features(df)
 
         if "DBWT" in df.columns:
-            if self.model_type == "linear regression":
+            if self.model_type == "RidgeRegressor":
                 y = (df["DBWT"].values.reshape((-1, 1)) - Y_MEAN) / Y_SD
             else:
                 y = (np.log(df["DBWT"]).values.reshape((-1, 1)) - LOGY_MEAN) / LOGY_SD

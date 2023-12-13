@@ -58,9 +58,9 @@ class Ensembler:
         df = df.copy()
 
         # save the data processors, so standardization parameters are available later
-        self.ridge_data_processor = DataProcessor(model_type="linear regression")
-        self.boost_data_processor = DataProcessor(model_type="xgboost")
-        self.nn_data_processor = DataProcessor(model_type="neural network")
+        self.ridge_data_processor = DataProcessor(model_type="RidgeRegressor")
+        self.boost_data_processor = DataProcessor(model_type="HistBoostRegressor")
+        self.nn_data_processor = DataProcessor(model_type="MissingnessNeuralNet")
         _ = self.ridge_data_processor(df)
         _ = self.boost_data_processor(df)
         _ = self.nn_data_processor(df)
@@ -142,10 +142,12 @@ class Ensembler:
             the arrays corresponding to the lower and upper bounds, respectively
         """
         df = df.copy()
+        if "DBWT" in df.columns:
+            df = df.drop("DBWT", axis=1)
 
-        xr = self.ridge_data_processor(df.drop("DBWT", axis=1))
-        xb = self.boost_data_processor(df.drop("DBWT", axis=1))
-        xn = self.nn_data_processor(df.drop("DBWT", axis=1))
+        xr = self.ridge_data_processor(df)
+        xb = self.boost_data_processor(df)
+        xn = self.nn_data_processor(df)
 
         lowers, uppers = [], []
         for k in range(self.n_folds):

@@ -310,8 +310,8 @@ class MissingnessNeuralNet:
 
     def __init__(
         self,
-        units: int = 10,
-        n_layers: int = 2,
+        units: int = 20,
+        n_layers: int = 1,
         n_components: int = 5,
         batch_size: int = 1000,
         n_epochs: int = 200,
