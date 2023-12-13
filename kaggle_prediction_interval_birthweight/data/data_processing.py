@@ -304,7 +304,7 @@ class DataProcessor:
         X_categorical = self._prepare_categorical_features(df)
 
         if "DBWT" in df.columns:
-            if self.model_type == "RidgeRegressor":
+            if self.model_type in ["RidgeRegressor"]:
                 y = (df["DBWT"].values.reshape((-1, 1)) - Y_MEAN) / Y_SD
             else:
                 y = (np.log(df["DBWT"]).values.reshape((-1, 1)) - LOGY_MEAN) / LOGY_SD
