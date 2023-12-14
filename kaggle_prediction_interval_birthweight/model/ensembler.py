@@ -26,6 +26,11 @@ class Ensembler:
         alpha: float
             significance level for prediction intervals
         """
+        param_grid = [
+            {"max_bins": [10, 50, 255]},
+            {"max_depth": [3, 10, None]},
+            {"min_samples_leaf": [20, 50, 200]},
+        ]
         self.alpha = alpha
         self.n_folds = n_folds
         self.histboosters = [HistBoostRegressor(alpha) for _ in range(n_folds)]
@@ -33,7 +38,7 @@ class Ensembler:
         self.neural_networks = [MissingnessNeuralNet() for _ in range(n_folds)]
         self.lower_regressor = GridSearchCV(
             estimator=HistGradientBoostingRegressor(quantile=(1 - alpha) / 2, loss="quantile"),
-            param_grid={"l2_regularization": [10**x for x in np.linspace(-4, 1, 15)]},
+            param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=(1 - alpha) / 2)),
             verbose=1,
         )
@@ -41,7 +46,7 @@ class Ensembler:
             estimator=HistGradientBoostingRegressor(
                 quantile=alpha + (1 - alpha) / 2, loss="quantile"
             ),
-            param_grid={"l2_regularization": [10**x for x in np.linspace(-4, 1, 15)]},
+            param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=alpha + (1 - alpha) / 2)),
             verbose=1,
         )
@@ -121,7 +126,9 @@ class Ensembler:
         print("Training the ensemble model.")
 
         # now train the ensembler on the left-out predictions from the previous two models
-        x_ens = df[upstream_predictions].values
+        x_ens = np.hstack(
+            [df[upstream_predictions].values, self.boost_data_processor(df.drop(["DBWT"], axis=1))]
+        )
         y_ens = df["DBWT"].values.squeeze()
 
         self.lower_regressor.fit(x_ens, y_ens)
@@ -164,8 +171,8 @@ class Ensembler:
                     nu.reshape((-1, 1)),
                 ]
             )
-            lower = self.lower_regressor.predict(x)
-            upper = self.upper_regressor.predict(x)
+            lower = self.lower_regressor.predict(np.hstack([x, xb]))
+            upper = self.upper_regressor.predict(np.hstack([x, xb]))
             lowers.append(lower)
             uppers.append(upper)
 

@@ -7,13 +7,12 @@ import pandas as pd
 from sklearn.preprocessing import OneHotEncoder
 
 from kaggle_prediction_interval_birthweight.model.constants import MISSING_CODE, VARIABLE_TYPE
+from kaggle_prediction_interval_birthweight.model.sampling_utils import np_softplus_inv
 
 TIMESTAMP_COL_NAME = "DOB_TT"
 Y_MEAN = 3260
 Y_SD = 590
-
-LOGY_MEAN = 8
-LOGY_SD = 0.25
+SOFTPLUS_SCALE = 5000
 
 
 class DataProcessor:
@@ -307,7 +306,7 @@ class DataProcessor:
             if self.model_type in ["RidgeRegressor"]:
                 y = (df["DBWT"].values.reshape((-1, 1)) - Y_MEAN) / Y_SD
             else:
-                y = (np.log(df["DBWT"]).values.reshape((-1, 1)) - LOGY_MEAN) / LOGY_SD
+                y = np_softplus_inv(df["DBWT"].values.reshape((-1, 1)) / SOFTPLUS_SCALE)
 
             return np.hstack([X_numeric, X_categorical]), y
         else:

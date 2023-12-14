@@ -5,7 +5,8 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.metrics import d2_pinball_score, make_scorer
 from sklearn.model_selection import GridSearchCV
 
-from kaggle_prediction_interval_birthweight.data.data_processing import LOGY_MEAN, LOGY_SD
+from kaggle_prediction_interval_birthweight.data.data_processing import SOFTPLUS_SCALE
+from kaggle_prediction_interval_birthweight.model.sampling_utils import np_softplus
 
 
 class HistBoostRegressor:
@@ -68,6 +69,6 @@ class HistBoostRegressor:
         Tuple
             the arrays corresponding to the lower and upper bounds, respectively
         """
-        lower = self.lower_regressor.predict(X) * LOGY_SD + LOGY_MEAN
-        upper = self.upper_regressor.predict(X) * LOGY_SD + LOGY_MEAN
-        return np.exp(lower).squeeze(), np.exp(upper).squeeze()
+        lower = np_softplus(self.lower_regressor.predict(X)) * SOFTPLUS_SCALE
+        upper = np_softplus(self.upper_regressor.predict(X)) * SOFTPLUS_SCALE
+        return lower.squeeze(), upper.squeeze()

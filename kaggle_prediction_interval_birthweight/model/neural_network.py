@@ -15,9 +15,10 @@ import tensorflow as tf
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
-from kaggle_prediction_interval_birthweight.data.data_processing import LOGY_MEAN, LOGY_SD
+from kaggle_prediction_interval_birthweight.data.data_processing import SOFTPLUS_SCALE
 from kaggle_prediction_interval_birthweight.model.sampling_utils import (
     compute_highest_density_interval,
+    np_softplus,
 )
 
 TFPI = tf.constant(3.14159265359, dtype=tf.float32)
@@ -94,7 +95,7 @@ def expected_relu(mu: tf.Tensor, sigma_sq: tf.Tensor) -> tf.Tensor:
 class DenseMissing(tf.keras.layers.Layer):
     """Extend the Dense layer to handle missing data."""
 
-    def __init__(self, units: int, n_components: int = 5, gamma: float = 1e-6, **kwargs) -> None:
+    def __init__(self, units: int, n_components: int = 3, gamma: float = 1e-6, **kwargs) -> None:
         """
         Parameters
         ----------
@@ -301,12 +302,12 @@ class MissingnessNeuralNet:
 
     def __init__(
         self,
-        units_list: List[int] = [20],
-        n_components: int = 5,
+        units_list: List[int] = [100, 50],
+        n_components: int = 3,
         dropout_rate: float = 0.3,
         bayesian: bool = False,
-        batch_size: int = 2000,
-        n_epochs: int = 200,
+        batch_size: int = 1000,
+        n_epochs: int = 1000,
         verbose: int = 0,
     ) -> None:
         """
@@ -372,14 +373,22 @@ class MissingnessNeuralNet:
 
         # the final layers for the mean, scale, skew and tail parameters
         pred_mean = tf.keras.layers.Dense(units=1, activation="linear")(next_output)
+
+        # scale is definitely less than 0.2 (raw sd is 0.1)
         pred_scale = tf.keras.layers.Dense(
-            units=1, activation=tf.math.softplus, kernel_initializer="zeros"
+            units=1, activation=lambda x: tf.math.sigmoid(x) * 0.2, kernel_initializer="zeros"
         )(next_output)
-        pred_skew = tf.keras.layers.Dense(units=1, activation="linear", kernel_initializer="zeros")(
-            next_output
-        )
+
+        # skew is limited between -0.5 and 0.5
+        pred_skew = tf.keras.layers.Dense(
+            units=1, activation=lambda x: tf.math.sigmoid(x) - 0.5, kernel_initializer="zeros"
+        )(next_output)
+
+        # tail is limited between 0.95 and 1.05
         pred_tail = tf.keras.layers.Dense(
-            units=1, activation=tf.math.softplus, kernel_initializer="zeros"
+            units=1,
+            activation=lambda x: tf.math.sigmoid(x) * 0.1 + 0.95,
+            kernel_initializer="zeros",
         )(next_output)
         output_layer = tf.keras.layers.Concatenate()([pred_mean, pred_scale, pred_skew, pred_tail])
 
@@ -388,7 +397,7 @@ class MissingnessNeuralNet:
             optimizer=tf.keras.optimizers.legacy.Adam(
                 learning_rate=tf.optimizers.schedules.CosineDecay(
                     initial_learning_rate=0.0001,
-                    warmup_target=0.001,
+                    warmup_target=0.0003,
                     warmup_steps=int(X.shape[0] / self.batch_size * self.n_epochs / 3),
                     decay_steps=int(2 * X.shape[0] / self.batch_size * self.n_epochs / 3),
                     alpha=0.0,
@@ -420,13 +429,14 @@ class MissingnessNeuralNet:
             shuffle=True,
             callbacks=[
                 tf.keras.callbacks.EarlyStopping(
-                    patience=10, restore_best_weights=True, min_delta=0.0001
-                )
+                    patience=50, restore_best_weights=True, min_delta=0.0001
+                ),
+                tf.keras.callbacks.TerminateOnNaN(),
             ],
         )
 
     def predict_intervals(
-        self, X: np.ndarray, alpha: float = 0.9, n_samples: int = 100
+        self, X: np.ndarray, alpha: float = 0.9, n_samples: int = 1000
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Predict the alpha * 100% interval for birthweight.
@@ -458,7 +468,7 @@ class MissingnessNeuralNet:
 
             lower, upper = np.apply_along_axis(
                 func1d=lambda x: compute_highest_density_interval(
-                    np.exp(x * LOGY_SD + LOGY_MEAN), alpha=alpha
+                    np_softplus(x) * SOFTPLUS_SCALE, alpha=alpha
                 ),
                 axis=0,
                 arr=predicted_samples,
@@ -470,10 +480,24 @@ class MissingnessNeuralNet:
             spread = spread + 1e-3
             tail = tail + 1e-3
 
+            buffers = np.linspace(-((1 - alpha) / 2) + 1e-6, ((1 - alpha) / 2) - 1e-6, 20)
+            widths = []
+            for buffer in buffers:
+                upper_edge = center + (tail * spread) * np.sinh(
+                    (1 / tail) * np.arcsinh(st.norm.ppf(alpha + (1 - alpha) / 2) - buffer)
+                    + skew / tail
+                )
+                lower_edge = center + (tail * spread) * np.sinh(
+                    (1 / tail) * np.arcsinh(st.norm.ppf((1 - alpha) / 2) - buffer) + skew / tail
+                )
+                widths.append((np_softplus(upper_edge) - np_softplus(lower_edge)).reshape((-1, 1)))
+            opt_buffers = buffers[np.hstack(widths).argmin(axis=1)]
+
             lower = center + (tail * spread) * np.sinh(
-                (1 / tail) * np.arcsinh(st.norm.ppf((1 - alpha) / 2)) + skew / tail
+                (1 / tail) * np.arcsinh(st.norm.ppf((1 - alpha) / 2) - opt_buffers) + skew / tail
             )
             upper = center + (tail * spread) * np.sinh(
-                (1 / tail) * np.arcsinh(st.norm.ppf(alpha + (1 - alpha) / 2)) + skew / tail
+                (1 / tail) * np.arcsinh(st.norm.ppf(alpha + (1 - alpha) / 2) - opt_buffers)
+                + skew / tail
             )
-            return np.exp(lower * LOGY_SD + LOGY_MEAN), np.exp(upper * LOGY_SD + LOGY_MEAN)
+            return np_softplus(lower) * SOFTPLUS_SCALE, np_softplus(upper) * SOFTPLUS_SCALE

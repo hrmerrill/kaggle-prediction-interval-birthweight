@@ -3,6 +3,16 @@ from typing import Tuple
 import numpy as np
 
 
+def np_softplus(x: np.ndarray) -> np.ndarray:
+    """Helper function for computing softplus without overflow."""
+    return np.log1p(np.exp(-np.abs(x))) + np.maximum(x, 0)
+
+
+def np_softplus_inv(x: np.ndarray) -> np.ndarray:
+    """Compute the inverse softplus without overflow."""
+    return np.log1p(-np.exp(-np.abs(x))) + np.maximum(x, 0)
+
+
 def compute_highest_density_interval(samples: np.ndarray, alpha: float = 0.9) -> Tuple[float]:
     """
     Get the compact HDI region from a set of samples.
