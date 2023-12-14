@@ -95,7 +95,7 @@ def expected_relu(mu: tf.Tensor, sigma_sq: tf.Tensor) -> tf.Tensor:
 class DenseMissing(tf.keras.layers.Layer):
     """Extend the Dense layer to handle missing data."""
 
-    def __init__(self, units: int, n_components: int = 3, gamma: float = 1e-6, **kwargs) -> None:
+    def __init__(self, units: int, n_components: int = 3, gamma: float = 1e-5, **kwargs) -> None:
         """
         Parameters
         ----------
@@ -272,7 +272,7 @@ def shash_loss(y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
     y_true: tf.Tensor
         Observation tensor
     y_pred: tf.Tensor
-        Predictions for each SHASH parameter (four columns)
+        Predictions for each SHASH parameter (three or four columns)
 
     Returns
     -------
@@ -282,7 +282,11 @@ def shash_loss(y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
     center = y_pred[:, 0]
     spread = y_pred[:, 1] + 1e-3
     skew = y_pred[:, 2]
-    tail = y_pred[:, 3] + 1e-3
+    if y_pred.shape[-1] == 4:
+        tail = y_pred[:, 3]
+    else:
+        tail = 1.0
+
     z = (y_true[:, 0] - center) / (spread * tail)
     sz = tf.math.sinh(tail * tf.math.asinh(z) - skew)
     lcz = tf.math.log(1.0 + sz**2.0) / 2.0
@@ -302,10 +306,11 @@ class MissingnessNeuralNet:
 
     def __init__(
         self,
-        units_list: List[int] = [100, 50],
+        units_list: List[int] = [200, 200, 200],
         n_components: int = 3,
         dropout_rate: float = 0.3,
         bayesian: bool = False,
+        fit_tail: bool = True,
         batch_size: int = 1000,
         n_epochs: int = 1000,
         verbose: int = 0,
@@ -321,6 +326,8 @@ class MissingnessNeuralNet:
             dropout rate for regularization
         bayesian: bool
             if True, layer weights are probabilistic and sampling is used for interval predictions
+        fit_tail: bool
+            if True, the SHASH tail parameter is also modeled as a function of the inputs
         batch_size: int
             minibatch size for gradient descent
         n_epochs: int
@@ -332,6 +339,7 @@ class MissingnessNeuralNet:
         self.n_components = n_components
         self.dropout_rate = dropout_rate
         self.bayesian = True if bayesian else None  # pass what Dropout expects
+        self.fit_tail = fit_tail
         self.batch_size = batch_size
         self.n_epochs = n_epochs
         self.verbose = verbose
@@ -353,11 +361,17 @@ class MissingnessNeuralNet:
             next_output = DenseMissing(units=self.units_list[0], n_components=self.n_components)(
                 inputs
             )
+            skip_output = DenseMissing(units=self.units_list[-1], n_components=self.n_components)(
+                inputs
+            )
         else:
             next_output = tf.keras.layers.Dense(units=self.units_list[0], activation=tf.nn.relu)(
                 inputs
             )
-        next_output = tf.keras.layers.BatchNormalization()(next_output)
+            skip_output = tf.keras.layers.Dense(units=self.units_list[-1], activation=tf.nn.relu)(
+                inputs
+            )
+        next_output = tf.keras.layers.BatchNormalization(scale=False)(next_output)
         next_output = tf.keras.layers.Dropout(self.dropout_rate)(
             next_output, training=self.bayesian
         )
@@ -370,13 +384,14 @@ class MissingnessNeuralNet:
                 next_output = tf.keras.layers.Dropout(self.dropout_rate)(
                     next_output, training=self.bayesian
                 )
+        next_output = next_output + skip_output
 
         # the final layers for the mean, scale, skew and tail parameters
         pred_mean = tf.keras.layers.Dense(units=1, activation="linear")(next_output)
 
-        # scale is definitely less than 0.2 (raw sd is 0.1)
+        # scale is definitely less than 1 (raw sd is about 0.6)
         pred_scale = tf.keras.layers.Dense(
-            units=1, activation=lambda x: tf.math.sigmoid(x) * 0.2, kernel_initializer="zeros"
+            units=1, activation=lambda x: tf.math.sigmoid(x), kernel_initializer="zeros"
         )(next_output)
 
         # skew is limited between -0.5 and 0.5
@@ -384,13 +399,18 @@ class MissingnessNeuralNet:
             units=1, activation=lambda x: tf.math.sigmoid(x) - 0.5, kernel_initializer="zeros"
         )(next_output)
 
-        # tail is limited between 0.95 and 1.05
-        pred_tail = tf.keras.layers.Dense(
-            units=1,
-            activation=lambda x: tf.math.sigmoid(x) * 0.1 + 0.95,
-            kernel_initializer="zeros",
-        )(next_output)
-        output_layer = tf.keras.layers.Concatenate()([pred_mean, pred_scale, pred_skew, pred_tail])
+        if self.fit_tail:
+            # tail is really unstable, so it is limited to values between 0.95 and 1.05
+            pred_tail = tf.keras.layers.Dense(
+                units=1,
+                activation=lambda x: tf.math.sigmoid(x) * 0.1 + 0.95,
+                kernel_initializer="zeros",
+            )(next_output)
+            output_layer = tf.keras.layers.Concatenate()(
+                [pred_mean, pred_scale, pred_skew, pred_tail]
+            )
+        else:
+            output_layer = tf.keras.layers.Concatenate()([pred_mean, pred_scale, pred_skew])
 
         self.model = tf.keras.models.Model(inputs=inputs, outputs=output_layer)
         self.model.compile(
@@ -458,9 +478,14 @@ class MissingnessNeuralNet:
         if self.bayesian:
             predicted_samples = np.random.randn(n_samples, X.shape[0])
             for i, sample in tqdm(enumerate(predicted_samples)):
-                center, spread, skew, tail = self.model(X).numpy().T
+                model_outputs = self.model(X).numpy()
+                if model_outputs.shape[-1] == 4:
+                    center, spread, skew, tail = model_outputs.T
+                else:
+                    center, spread, skew = model_outputs.T
+                    tail = 1.0
                 spread = spread + 1e-3
-                tail = tail + 1e-3
+
                 prediction = center + (tail * spread) * (
                     np.sinh((1 / tail) * np.arcsinh(sample) + skew / tail)
                 )
@@ -476,9 +501,12 @@ class MissingnessNeuralNet:
             return lower, upper
 
         else:
-            center, spread, skew, tail = self.model.predict(X).T
-            spread = spread + 1e-3
-            tail = tail + 1e-3
+            model_outputs = self.model(X).numpy()
+            if model_outputs.shape[-1] == 4:
+                center, spread, skew, tail = model_outputs.T
+            else:
+                center, spread, skew = model_outputs.T
+                tail = 1.0
 
             buffers = np.linspace(-((1 - alpha) / 2) + 1e-6, ((1 - alpha) / 2) - 1e-6, 20)
             widths = []

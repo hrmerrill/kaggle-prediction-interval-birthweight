@@ -12,7 +12,7 @@ from kaggle_prediction_interval_birthweight.model.sampling_utils import np_softp
 TIMESTAMP_COL_NAME = "DOB_TT"
 Y_MEAN = 3260
 Y_SD = 590
-SOFTPLUS_SCALE = 5000
+SOFTPLUS_SCALE = 1000
 
 
 class DataProcessor:
@@ -43,6 +43,7 @@ class DataProcessor:
         self.model_type = model_type
         self.standardization_parameters = standardization_parameters
         self.feature_categories = feature_categories
+        self.nondegenerate_columns = None
 
     def _enforce_feature_types(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -151,6 +152,7 @@ class DataProcessor:
         df = df.drop(["PAY", "ILP_R"], axis=1)
 
         # we also added a polynomial effect for one feature
+        df["ILOP_R"] = np.log(df["ILOP_R"] + 0.1)
         df["ILOP_R_2"] = df["ILOP_R"] ** 2
         df["ILOP_R_3"] = df["ILOP_R"] ** 3
         keepers = keepers + ["ILOP_R_2", "ILOP_R_3"]
@@ -203,8 +205,8 @@ class DataProcessor:
         """
         # for regression and neural networks, unskew those four features
         if self.model_type in ["RidgeRegressor", "MissingnessNeuralNet"]:
-            for feature in ["CIG_0", "PRIORDEAD", "PRIORTERM", "RF_CESARN"]:
-                df[feature] = np.log(df[feature] + 1)
+            for feature in ["CIG_0", "PRIORDEAD", "PRIORLIVE", "PRIORTERM", "RF_CESARN"]:
+                df[feature] = np.log(df[feature] + 0.1)
 
         x_numeric = df[self.numeric_features].values
 
@@ -229,15 +231,18 @@ class DataProcessor:
             if self.standardization_parameters is None:
                 self.standardization_parameters = {}
                 self.standardization_parameters["means"] = np.nanmean(x_numeric, axis=0)
-                self.standardization_parameters["sds"] = np.nanstd(x_numeric, axis=0) * 3.0
+                self.standardization_parameters["sds"] = np.nanmax(
+                    np.abs(x_numeric - np.nanmean(x_numeric, axis=0)), axis=0
+                )
 
             x_numeric = (
                 x_numeric - self.standardization_parameters["means"]
             ) / self.standardization_parameters["sds"]
 
-        # tell the neural network where the missing data are
+        # tell the neural network how many missing points
         if self.model_type == "MissingnessNeuralNet":
-            x_numeric = np.hstack([x_numeric, np.where(np.isnan(x_numeric), 1, 0)])
+            num_missing = np.isnan(x_numeric).sum(axis=1).reshape(-1, 1)
+            x_numeric = np.hstack([x_numeric, num_missing])
 
         return x_numeric
 
@@ -301,6 +306,10 @@ class DataProcessor:
         df = self._subset_and_binarize(df)
         X_numeric = self._prepare_numerical_features(df)
         X_categorical = self._prepare_categorical_features(df)
+        X = np.hstack([X_numeric, X_categorical])
+        if self.nondegenerate_columns is None:
+            self.nondegenerate_columns = (X.max(axis=0) - X.min(axis=0)) != 0
+        X = X[:, self.nondegenerate_columns]
 
         if "DBWT" in df.columns:
             if self.model_type in ["RidgeRegressor"]:
@@ -308,6 +317,6 @@ class DataProcessor:
             else:
                 y = np_softplus_inv(df["DBWT"].values.reshape((-1, 1)) / SOFTPLUS_SCALE)
 
-            return np.hstack([X_numeric, X_categorical]), y
+            return X, y
         else:
-            return np.hstack([X_numeric, X_categorical])
+            return X
