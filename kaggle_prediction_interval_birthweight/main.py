@@ -13,7 +13,7 @@ app = typer.Typer()
 
 @app.command()
 def create_submission(
-    model_type: str,
+    model_type: str = "RidgeRegressor",
     train_data_path: str = LOCAL_DIR + "train.csv",
     test_data_path: str = LOCAL_DIR + "test.csv",
     output_path: Optional[str] = None,
@@ -46,7 +46,3 @@ def create_submission(
     lower, upper = validator.predict_intervals(test_data)
     test_data[["id"]].assign(pi_lower=lower, pi_upper=upper).to_csv(output_path, index=False)
     print("Submission file saved to: \n" + output_path)
-
-
-if __name__ == "__main__":
-    app()
