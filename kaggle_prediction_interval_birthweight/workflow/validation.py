@@ -95,7 +95,7 @@ class Validator:
 
         lowers, uppers = [], []
         for cv_fold in range(self.n_folds):
-            if self.model_type == "HistBoostEnsembler":
+            if self.model_type in ["HistBoostEnsembler", "NeuralNetEnsembler"]:
                 lower, upper = self.models[cv_fold].predict_intervals(df)
             else:
                 x = self.data_processors[cv_fold](df)
