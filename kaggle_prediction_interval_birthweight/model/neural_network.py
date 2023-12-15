@@ -301,8 +301,8 @@ def shash_loss(y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
     return -llk
 
 
-class MissingnessNeuralNet:
-    """Class for neural network that can handle missing values."""
+class MissingnessNeuralNetRegressor:
+    """Class for neural network regressor that can handle missing values."""
 
     def __init__(
         self,
@@ -325,7 +325,8 @@ class MissingnessNeuralNet:
         dropout_rate: float
             dropout rate for regularization
         bayesian: bool
-            if True, layer weights are probabilistic and sampling is used for interval predictions
+            if True, layer weights are probabilistic and sampling is used for interval predictions.
+            This is expensive
         fit_tail: bool
             if True, the SHASH tail parameter is also modeled as a function of the inputs
         batch_size: int
@@ -529,3 +530,169 @@ class MissingnessNeuralNet:
                 + skew / tail
             )
             return np_softplus(lower) * SOFTPLUS_SCALE, np_softplus(upper) * SOFTPLUS_SCALE
+
+
+class MissingnessNeuralNetClassifier:
+    """Class for neural network classifier that can handle missing values."""
+
+    def __init__(
+        self,
+        units_list: List[int] = [200, 200, 200],
+        n_components: int = 3,
+        dropout_rate: float = 0.3,
+        batch_size: int = 1000,
+        n_epochs: int = 100,
+        verbose: int = 0,
+    ) -> None:
+        """
+        Parameters
+        ----------
+        units_list: int
+            number of units in each hidden layer (excluding input and output layers)
+        n_components: int
+            number of components of the gaussian mixture distribution of the DenseMissing layer
+        dropout_rate: float
+            dropout rate for regularization
+        batch_size: int
+            minibatch size for gradient descent
+        n_epochs: int
+            number of epochs for training the model
+        verbose: bool
+            controls the verbosity during training (passed to tf.model.fit())
+        """
+        self.units_list = units_list
+        self.n_components = n_components
+        self.dropout_rate = dropout_rate
+        self.batch_size = batch_size
+        self.n_epochs = n_epochs
+        self.verbose = verbose
+
+    def build_model(self, X: np.ndarray, n_categories: int) -> None:
+        """
+        Build the model.
+
+        Parameters
+        ----------
+        X: np.ndarray
+            Design matrix containing features
+        n_categories: int
+            The number of categories to predict
+        """
+        missingness_present = np.isnan(X).any()
+        inputs = tf.keras.layers.Input(shape=(X.shape[-1],))
+
+        # first layer must be DenseMissing to accomodate missing values
+        if missingness_present:
+            next_output = DenseMissing(units=self.units_list[0], n_components=self.n_components)(
+                inputs
+            )
+            skip_output = DenseMissing(units=self.units_list[-1], n_components=self.n_components)(
+                inputs
+            )
+        else:
+            next_output = tf.keras.layers.Dense(units=self.units_list[0], activation=tf.nn.relu)(
+                inputs
+            )
+            skip_output = tf.keras.layers.Dense(units=self.units_list[-1], activation=tf.nn.relu)(
+                inputs
+            )
+        next_output = tf.keras.layers.BatchNormalization(scale=False)(next_output)
+        next_output = tf.keras.layers.Dropout(self.dropout_rate)(next_output)
+
+        if len(self.units_list) > 1:
+            for units in self.units_list[1:]:
+                # these can be standard layers, there are no missing values from DenseMissing
+                next_output = tf.keras.layers.Dense(units=units, activation=tf.nn.relu)(next_output)
+                next_output = tf.keras.layers.BatchNormalization()(next_output)
+                next_output = tf.keras.layers.Dropout(self.dropout_rate)(next_output)
+        next_output = next_output + skip_output
+
+        # the final layers for the predictions
+        probs = tf.keras.layers.Dense(units=n_categories, activation="softmax")(next_output)
+        self.model = tf.keras.models.Model(inputs=inputs, outputs=probs)
+        self.model.compile(
+            optimizer=tf.keras.optimizers.legacy.Adam(
+                learning_rate=tf.optimizers.schedules.CosineDecay(
+                    initial_learning_rate=0.0001,
+                    warmup_target=0.0003,
+                    warmup_steps=int(X.shape[0] / self.batch_size * self.n_epochs / 3),
+                    decay_steps=int(2 * X.shape[0] / self.batch_size * self.n_epochs / 3),
+                    alpha=0.0,
+                )
+            ),
+            loss="sparse_categorical_crossentropy",
+        )
+
+    def fit(self, X: np.ndarray, y: np.ndarray, n_categories: int) -> None:
+        """
+        Fit the model.
+
+        Parameters
+        ----------
+        X: np.ndarray
+            Design matrix containing features
+        y: np.ndarray
+            Array of response values
+        n_categories: int
+            Number of categories represented in y
+        """
+        self.build_model(X, n_categories=n_categories)
+        x_train, x_val, y_train, y_val = train_test_split(X, y, random_state=1, test_size=0.3)
+        self.model.fit(
+            x=tf.convert_to_tensor(x_train),
+            y=tf.convert_to_tensor(y_train),
+            validation_data=(x_val, y_val),
+            batch_size=self.batch_size,
+            epochs=self.n_epochs,
+            verbose=self.verbose,
+            shuffle=True,
+            callbacks=[
+                tf.keras.callbacks.EarlyStopping(
+                    patience=10, restore_best_weights=True, min_delta=0.0001
+                ),
+                tf.keras.callbacks.TerminateOnNaN(),
+            ],
+        )
+
+    def predict_intervals(
+        self, X: np.ndarray, bin_values: np.ndarray, alpha: float = 0.9
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Predict the alpha * 100% interval for birthweight.
+
+        Parameters
+        ----------
+        X: np.ndarray
+            the design matrix used by self.fit(X, y)
+        bin_values: np.ndarray
+            the numeric values corresponding to each category (e.g., bin midpoint)
+        alpha: float
+            the significance level of the predicted intervals
+
+        Returns
+        -------
+        Tuple
+            the arrays corresponding to the lower and upper bounds, respectively
+        """
+
+        def get_smallest_interval_rowwise(row, alpha=alpha, bin_values=bin_values):
+            """helper function to apply row-wise to get smallest the interval."""
+            upper_indices, widths = [], []
+            for lower_index in range(len(row)):
+                cumulative_probs = row[lower_index:].cumsum()
+                if cumulative_probs[-1] <= alpha:
+                    break
+                else:
+                    upper_index = np.where(cumulative_probs >= alpha)[0].min() + lower_index - 1
+                    widths.append(bin_values[upper_index] - bin_values[lower_index])
+                    upper_indices.append(upper_index)
+            return np.array(widths).argmin(), upper_indices[np.array(widths).argmin()]
+
+        probs = self.model.predict(X)
+        lower_inds, upper_inds = [], []
+        for probs_row in tqdm(probs, total=probs.shape[0]):
+            lower_ind, upper_ind = get_smallest_interval_rowwise(probs_row)
+            lower_inds.append(lower_ind)
+            upper_inds.append(upper_ind)
+        lower, upper = bin_values[lower_inds], bin_values[upper_inds]
+        return lower, upper

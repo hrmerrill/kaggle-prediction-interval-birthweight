@@ -51,8 +51,14 @@ class Validator:
             if not self.model_type in ["HistBoostEnsembler", "NeuralNetEnsembler"]:
                 x_train, y_train = self.data_processors[cv_fold](df_train)
                 x_test, y_test = self.data_processors[cv_fold](df_test)
-                self.models[cv_fold].fit(x_train, y_train)
-                lower, upper = self.models[cv_fold].predict_intervals(x_test)
+                if self.model_type == "MissingnessNeuralNetClassifier":
+                    self.models[cv_fold].fit(x_train, y_train, self.data_processors[cv_fold].n_bins)
+                    lower, upper = self.models[cv_fold].predict_intervals(
+                        x_test, bin_values=self.data_processors[cv_fold].bin_values
+                    )
+                else:
+                    self.models[cv_fold].fit(x_train, y_train)
+                    lower, upper = self.models[cv_fold].predict_intervals(x_test)
             else:
                 self.models[cv_fold].fit(df_train)
                 lower, upper = self.models[cv_fold].predict_intervals(df_test)
@@ -97,6 +103,11 @@ class Validator:
         for cv_fold in range(self.n_folds):
             if self.model_type in ["HistBoostEnsembler", "NeuralNetEnsembler"]:
                 lower, upper = self.models[cv_fold].predict_intervals(df)
+            elif self.model_type == "MissingnessNeuralNetClassifier":
+                x = self.data_processors[cv_fold](df)
+                lower, upper = self.models[cv_fold].predict_intervals(
+                    x, bin_values=self.data_processors[cv_fold].bin_values
+                )
             else:
                 x = self.data_processors[cv_fold](df)
                 lower, upper = self.models[cv_fold].predict_intervals(x)

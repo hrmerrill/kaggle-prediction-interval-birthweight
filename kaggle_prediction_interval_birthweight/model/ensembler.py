@@ -8,12 +8,15 @@ from sklearn.model_selection import GridSearchCV
 from tqdm import tqdm
 
 from kaggle_prediction_interval_birthweight.data.data_processing import (
-    DataProcessor,
     SOFTPLUS_SCALE,
+    DataProcessor,
 )
 from kaggle_prediction_interval_birthweight.model.hist_gradient_boosting import HistBoostRegressor
 from kaggle_prediction_interval_birthweight.model.linear_regression import RidgeRegressor
-from kaggle_prediction_interval_birthweight.model.neural_network import MissingnessNeuralNet
+from kaggle_prediction_interval_birthweight.model.neural_network import (
+    MissingnessNeuralNetClassifier,
+    MissingnessNeuralNetRegressor,
+)
 from kaggle_prediction_interval_birthweight.model.sampling_utils import (
     compute_highest_density_interval,
     np_softplus,
@@ -39,14 +42,18 @@ class BaseEnsembler:
         self.n_folds = n_folds
         self.histboosters = [HistBoostRegressor(alpha) for _ in range(n_folds)]
         self.ridge_regressors = [RidgeRegressor() for _ in range(n_folds)]
-        self.neural_networks = [
-            MissingnessNeuralNet(bayesian=False, fit_tail=True) for _ in range(n_folds)
+        self.nn_regressors = [
+            MissingnessNeuralNetRegressor(bayesian=False, fit_tail=True) for _ in range(n_folds)
         ]
+        self.nn_classifiers = [MissingnessNeuralNetClassifier() for _ in range(n_folds)]
 
         ridge_predictions = ["lower_ridge", "mean_ridge", "upper_ridge"]
         boost_predictions = ["lower_boost", "upper_boost"]
         nn_predictions = ["center_nn", "scale_nn", "skew_nn", "tail_nn", "lower_nn", "upper_nn"]
-        self.upstream_predictions = ridge_predictions + boost_predictions + nn_predictions
+        nnc_predictions = ["lower_nnc", "mode_nnc", "upper_nnc"]
+        self.upstream_predictions = (
+            ridge_predictions + boost_predictions + nn_predictions + nnc_predictions
+        )
 
     def prepare_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -67,10 +74,12 @@ class BaseEnsembler:
         # save the data processors, so standardization parameters are available later
         self.ridge_data_processor = DataProcessor(model_type="RidgeRegressor")
         self.boost_data_processor = DataProcessor(model_type="HistBoostRegressor")
-        self.nn_data_processor = DataProcessor(model_type="MissingnessNeuralNet")
+        self.nn_data_processor = DataProcessor(model_type="MissingnessNeuralNetRegressor")
+        self.nnc_data_processor = DataProcessor(model_type="MissingnessNeuralNetClassifier")
         _ = self.ridge_data_processor(df)
         _ = self.boost_data_processor(df)
         _ = self.nn_data_processor(df)
+        _ = self.nnc_data_processor(df)
 
         # create some information for holding new data in the data frame
         df["fold"] = np.random.choice(self.n_folds, df.shape[0])
@@ -95,6 +104,9 @@ class BaseEnsembler:
             xn_train, yn_train = self.nn_data_processor(df_train)
             xn_test = self.nn_data_processor(df_test.drop("DBWT", axis=1))
 
+            xnc_train, ync_train = self.nnc_data_processor(df_train)
+            xnc_test = self.nnc_data_processor(df_test.drop("DBWT", axis=1))
+
             print("Training the ridge regression model.")
             self.ridge_regressors[k].fit(xr_train, yr_train)
             ridge_mean = self.ridge_regressors[k].predict(xr_test)
@@ -111,18 +123,30 @@ class BaseEnsembler:
             df.loc[df["fold"] == k, "lower_boost"] = boost_lower.squeeze() / SOFTPLUS_SCALE
             df.loc[df["fold"] == k, "upper_boost"] = boost_upper.squeeze() / SOFTPLUS_SCALE
 
-            print("Training the neural network model.")
-            self.neural_networks[k].fit(xn_train, yn_train)
-            center, spread, skew, tail = self.neural_networks[k].model(xn_test).numpy().T
-            nn_lower, nn_upper = self.neural_networks[k].predict_intervals(
-                xn_test, alpha=self.alpha
-            )
+            print("Training the neural network regressor.")
+            self.nn_regressors[k].fit(xn_train, yn_train)
+            center, spread, skew, tail = self.nn_regressors[k].model(xn_test).numpy().T
+            nn_lower, nn_upper = self.nn_regressors[k].predict_intervals(xn_test, alpha=self.alpha)
             df.loc[df["fold"] == k, "center_nn"] = center.squeeze()
             df.loc[df["fold"] == k, "scale_nn"] = spread.squeeze()
             df.loc[df["fold"] == k, "skew_nn"] = skew.squeeze()
             df.loc[df["fold"] == k, "tail_nn"] = tail.squeeze()
             df.loc[df["fold"] == k, "lower_nn"] = nn_lower.squeeze() / SOFTPLUS_SCALE
             df.loc[df["fold"] == k, "upper_nn"] = nn_upper.squeeze() / SOFTPLUS_SCALE
+
+            print("Training the neural network classifier.")
+            self.nn_classifiers[k].fit(
+                xnc_train, ync_train, n_categories=self.nnc_data_processor.n_bins
+            )
+            nnc_modes = self.nnc_data_processor.bin_values[
+                self.nn_classifiers[k].model.predict(xnc_test).argmax()
+            ]
+            nnc_lower, nnc_upper = self.nn_classifiers[k].predict_intervals(
+                xnc_test, bin_values=self.nnc_data_processor.bin_values
+            )
+            df.loc[df["fold"] == k, "lower_nnc"] = nnc_lower.squeeze() / SOFTPLUS_SCALE
+            df.loc[df["fold"] == k, "mode_nnc"] = nnc_modes.squeeze() / SOFTPLUS_SCALE
+            df.loc[df["fold"] == k, "upper_nnc"] = nnc_upper.squeeze() / SOFTPLUS_SCALE
 
         return df
 
@@ -142,9 +166,10 @@ class HistBoostEnsembler(BaseEnsembler):
         super(HistBoostEnsembler, self).__init__(**kwargs)
 
         param_grid = [
-            {"max_bins": [10, 50, 255]},
+            {"max_bins": [50, 255]},
             {"max_depth": [3, 10, None]},
             {"min_samples_leaf": [20, 50, 200]},
+            {"learning_rate": [0.1, 0.01]},
         ]
         self.lower_regressor = GridSearchCV(
             estimator=HistGradientBoostingRegressor(quantile=(1 - self.alpha) / 2, loss="quantile"),
@@ -206,14 +231,21 @@ class HistBoostEnsembler(BaseEnsembler):
         xr = self.ridge_data_processor(df)
         xb = self.boost_data_processor(df)
         xn = self.nn_data_processor(df)
+        xnc = self.nnc_data_processor(df)
 
         lowers, uppers = [], []
         for k in range(self.n_folds):
             rm = self.ridge_regressors[k].predict(xr)
             rl, ru = self.ridge_regressors[k].predict_intervals(xr)
             hl, hu = self.histboosters[k].predict_intervals(xb)
-            nc, ns, nk, nt = self.neural_networks[k].model(xn).numpy().T
-            nl, nu = self.neural_networks[k].predict_intervals(xn)
+            nc, ns, nk, nt = self.nn_regressors[k].model(xn).numpy().T
+            nl, nu = self.nn_regressors[k].predict_intervals(xn)
+            nncm = self.nnc_data_processor.bin_values[
+                self.nn_classifiers[k].model.predict(xnc).argmax()
+            ]
+            nncl, nncu = self.nn_classifiers[k].predict_intervals(
+                xnc, self.nnc_data_processor.bin_values
+            )
             x = np.hstack(
                 [
                     rl.reshape((-1, 1)) / SOFTPLUS_SCALE,
@@ -227,6 +259,9 @@ class HistBoostEnsembler(BaseEnsembler):
                     nt.reshape((-1, 1)),
                     nl.reshape((-1, 1)) / SOFTPLUS_SCALE,
                     nu.reshape((-1, 1)) / SOFTPLUS_SCALE,
+                    nncl.reshape((-1, 1)) / SOFTPLUS_SCALE,
+                    nncm.reshape((-1, 1)) / SOFTPLUS_SCALE,
+                    nncu.reshape((-1, 1)) / SOFTPLUS_SCALE,
                 ]
             )
             lower = self.lower_regressor.predict(np.hstack([x, xb]))
@@ -241,7 +276,7 @@ class HistBoostEnsembler(BaseEnsembler):
 
 class NeuralNetEnsembler(BaseEnsembler):
     """
-    Create an ensemble model that combines the other models into a MissingnessNeuralNet.
+    Create an ensemble model that combines the other models into a MissingnessNeuralNetRegressor.
     """
 
     def __init__(self, n_folds: int = 3, alpha: float = 0.9, **kwargs) -> None:
@@ -253,10 +288,10 @@ class NeuralNetEnsembler(BaseEnsembler):
         alpha: float
             significance level for prediction intervals
         **kwargs: dict
-            arguments passed to MissingnessNeuralNet
+            arguments passed to MissingnessNeuralNetRegressor
         """
         super(NeuralNetEnsembler, self).__init__(n_folds, alpha)
-        self.neural_net = MissingnessNeuralNet(bayesian=True, fit_tail=True, **kwargs)
+        self.neural_net = MissingnessNeuralNetRegressor(bayesian=True, fit_tail=True, **kwargs)
 
     def fit(self, df: pd.DataFrame) -> None:
         """
@@ -307,14 +342,21 @@ class NeuralNetEnsembler(BaseEnsembler):
         xr = self.ridge_data_processor(df)
         xb = self.boost_data_processor(df)
         xn = self.nn_data_processor(df)
+        xnc = self.nnc_data_processor(df)
 
         predicted_samples_list = []
         for k in range(self.n_folds):
             rm = self.ridge_regressors[k].predict(xr)
             rl, ru = self.ridge_regressors[k].predict_intervals(xr)
             hl, hu = self.histboosters[k].predict_intervals(xb)
-            nc, ns, nk, nt = self.neural_networks[k].model(xn).numpy().T
-            nl, nu = self.neural_networks[k].predict_intervals(xn)
+            nc, ns, nk, nt = self.nn_regressors[k].model(xn).numpy().T
+            nl, nu = self.nn_regressors[k].predict_intervals(xn)
+            nncm = self.nnc_data_processor.bin_values[
+                self.nn_classifiers[k].model.predict(xnc).argmax()
+            ]
+            nncl, nncu = self.nn_classifiers[k].predict_intervals(
+                xnc, self.nnc_data_processor.bin_values
+            )
             x = np.hstack(
                 [
                     rl.reshape((-1, 1)) / SOFTPLUS_SCALE,
@@ -328,6 +370,9 @@ class NeuralNetEnsembler(BaseEnsembler):
                     nt.reshape((-1, 1)),
                     nl.reshape((-1, 1)) / SOFTPLUS_SCALE,
                     nu.reshape((-1, 1)) / SOFTPLUS_SCALE,
+                    nncl.reshape((-1, 1)) / SOFTPLUS_SCALE,
+                    nncm.reshape((-1, 1)) / SOFTPLUS_SCALE,
+                    nncu.reshape((-1, 1)) / SOFTPLUS_SCALE,
                 ]
             )
             x_inputs = np.hstack([x, xn])

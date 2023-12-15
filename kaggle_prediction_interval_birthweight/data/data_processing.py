@@ -10,6 +10,8 @@ from kaggle_prediction_interval_birthweight.model.constants import MISSING_CODE,
 from kaggle_prediction_interval_birthweight.model.sampling_utils import np_softplus_inv
 
 TIMESTAMP_COL_NAME = "DOB_TT"
+Y_MIN = 230
+Y_MAX = 6840
 Y_MEAN = 3260
 Y_SD = 590
 SOFTPLUS_SCALE = 1000
@@ -23,26 +25,39 @@ class DataProcessor:
         model_type: str,
         standardization_parameters: Optional[Dict[str, np.ndarray]] = None,
         feature_categories: Optional[Dict[str, str]] = None,
+        n_bins: int = 500,
     ) -> None:
         """
         Parameters
         ----------
         model_type: str
-            One of "RidgeRegressor", "HistBoostRegressor", or "MissingnessNeuralNet". Determines
-            how data are imputed and standardized before modeling.
+            One of "RidgeRegressor", "HistBoostRegressor", "MissingnessNeuralNetRegressor", or
+            "MissingnessNeuralNetClassifier". Determines how data are imputed and standardized
+            before modeling.
         standardization_parameters: Dict
             Precomputed columnwise means and sds or decorrelation matrix, if already computed.
             None during training, but at test time these values should be passed in.
         feature_categories: Dict
             levels of categorical variables. None during training (they are inferred), but at
             test time these values should be passed in.
+        n_bins: int
+            if model_type == "MissingnessNeuralNetClassifier", the response variable is
+            categorized into n_bins equally spaced bins.
         """
-        allowed_model_types = ["RidgeRegressor", "HistBoostRegressor", "MissingnessNeuralNet"]
+        allowed_model_types = [
+            "RidgeRegressor",
+            "HistBoostRegressor",
+            "MissingnessNeuralNetRegressor",
+            "MissingnessNeuralNetClassifier",
+        ]
         if model_type not in allowed_model_types:
             raise NotImplementedError(f"Supported model_type values: {allowed_model_types}")
         self.model_type = model_type
         self.standardization_parameters = standardization_parameters
         self.feature_categories = feature_categories
+        self.n_bins = n_bins
+        self.bin_edges = np.linspace(Y_MIN - 1, Y_MAX + 1, self.n_bins)
+        self.bin_values = (self.bin_edges[1:] + self.bin_edges[:-1]) / 2
         self.nondegenerate_columns = None
 
     def _enforce_feature_types(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -127,7 +142,10 @@ class DataProcessor:
                     replacement = df.loc[~df[feature].isin(missing_code), feature].median()
 
             # for the neural network, use real NAs with the expected relu layer.
-            elif self.model_type == "MissingnessNeuralNet":
+            elif self.model_type in [
+                "MissingnessNeuralNetRegressor",
+                "MissingnessNeuralNetClassifier",
+            ]:
                 replacement = None
             df.loc[df[feature].isin(missing_code), feature] = replacement
 
@@ -201,7 +219,11 @@ class DataProcessor:
             The array of transformed numerical features.
         """
         # for regression and neural networks, unskew those four features
-        if self.model_type in ["RidgeRegressor", "MissingnessNeuralNet"]:
+        if self.model_type in [
+            "RidgeRegressor",
+            "MissingnessNeuralNetRegressor",
+            "MissingnessNeuralNetClassifier",
+        ]:
             for feature in ["CIG_0", "PRIORDEAD", "PRIORLIVE", "PRIORTERM", "RF_CESARN"]:
                 df[feature] = np.log(df[feature] + 0.1)
 
@@ -224,7 +246,7 @@ class DataProcessor:
             )
 
         # for the neural network, we will standardize without decorrelating
-        elif self.model_type == "MissingnessNeuralNet":
+        elif self.model_type in ["MissingnessNeuralNetRegressor", "MissingnessNeuralNetClassifier"]:
             if self.standardization_parameters is None:
                 self.standardization_parameters = {}
                 self.standardization_parameters["means"] = np.nanmean(x_numeric, axis=0)
@@ -237,7 +259,7 @@ class DataProcessor:
             ) / self.standardization_parameters["sds"]
 
         # tell the neural network how many missing points
-        if self.model_type == "MissingnessNeuralNet":
+        if self.model_type in ["MissingnessNeuralNetRegressor", "MissingnessNeuralNetClassifier"]:
             num_missing = np.isnan(x_numeric).sum(axis=1).reshape(-1, 1)
             x_numeric = np.hstack([x_numeric, num_missing])
 
@@ -276,7 +298,10 @@ class DataProcessor:
                 ).fit_transform(df[feature].values.reshape((-1, 1)))
 
             # put NAs back for the neural network
-            if self.model_type == "MissingnessNeuralNet":
+            if self.model_type in [
+                "MissingnessNeuralNetRegressor",
+                "MissingnessNeuralNetClassifier",
+            ]:
                 x_one_hot_col = x_one_hot_col * np.where(df[feature].isna(), np.nan, 1.0).reshape(
                     (-1, 1)
                 )
@@ -311,6 +336,8 @@ class DataProcessor:
         if "DBWT" in df.columns:
             if self.model_type in ["RidgeRegressor"]:
                 y = (df["DBWT"].values.reshape((-1, 1)) - Y_MEAN) / Y_SD
+            elif self.model_type in ["MissingnessNeuralNetClassifier"]:
+                y = pd.cut(df["DBWT"], bins=self.bin_edges, labels=False)
             else:
                 y = np_softplus_inv(df["DBWT"].values.reshape((-1, 1)) / SOFTPLUS_SCALE)
 
