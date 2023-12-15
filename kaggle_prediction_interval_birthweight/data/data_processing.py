@@ -151,7 +151,8 @@ class DataProcessor:
         keepers = list(set(VARIABLE_TYPE.keys()) - {"PAY", "ILP_R"})
         df = df.drop(["PAY", "ILP_R"], axis=1)
 
-        # we also added a polynomial effect for one feature
+        # we also added a polynomial effect for one (transformed) feature
+        ilopr_missing_codes = [np.log(x + 0.1) for x in MISSING_CODE["ILOP_R"]]
         df["ILOP_R"] = np.log(df["ILOP_R"] + 0.1)
         df["ILOP_R_2"] = df["ILOP_R"] ** 2
         df["ILOP_R_3"] = df["ILOP_R"] ** 3
@@ -159,12 +160,8 @@ class DataProcessor:
 
         # NaNs and medians are taken care of, but for the tree-based model, use the missing code
         if self.model_type == "HistBoostRegressor":
-            df.loc[df["ILOP_R"].isin(MISSING_CODE["ILOP_R"]), "ILOP_R_2"] = MISSING_CODE["ILOP_R"][
-                0
-            ]
-            df.loc[df["ILOP_R"].isin(MISSING_CODE["ILOP_R"]), "ILOP_R_3"] = MISSING_CODE["ILOP_R"][
-                0
-            ]
+            df.loc[df["ILOP_R"].isin(ilopr_missing_codes), "ILOP_R_2"] = ilopr_missing_codes[0]
+            df.loc[df["ILOP_R"].isin(ilopr_missing_codes), "ILOP_R_3"] = ilopr_missing_codes[0]
 
         numeric_features = list(
             set(keepers)

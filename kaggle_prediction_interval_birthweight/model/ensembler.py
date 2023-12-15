@@ -5,6 +5,7 @@ import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.metrics import d2_pinball_score, make_scorer
 from sklearn.model_selection import GridSearchCV
+from tqdm import tqdm
 
 from kaggle_prediction_interval_birthweight.data.data_processing import (
     DataProcessor,
@@ -74,7 +75,7 @@ class BaseEnsembler:
         # create some information for holding new data in the data frame
         df["fold"] = np.random.choice(self.n_folds, df.shape[0])
         for feature in self.upstream_predictions:
-            df[feature] = None
+            df[feature] = np.nan
 
         # loop across splits, fit and prediction from upstream models
         for k in range(self.n_folds):
@@ -279,7 +280,7 @@ class NeuralNetEnsembler(BaseEnsembler):
         self.neural_net.fit(x_ens, y_ens)
 
     def predict_intervals(
-        self, df: pd.DataFrame, alpha: float = 0.9
+        self, df: pd.DataFrame, alpha: float = 0.9, n_samples: int = 1000
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Predict the alpha * 100% interval for birthweight.
@@ -291,6 +292,8 @@ class NeuralNetEnsembler(BaseEnsembler):
         alpha: float
             significance level for prediction intervals. Can be different from the value
             passed at initialization.
+        n_samples: int
+            This many samples are drawn from the posterior distribution
 
         Returns
         -------

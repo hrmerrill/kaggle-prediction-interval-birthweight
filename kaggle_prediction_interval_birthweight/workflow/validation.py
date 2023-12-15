@@ -16,7 +16,8 @@ class Validator:
         Parameters
         ----------
         model_type: str
-            one of RidgeRegressor, HistBoostRegressor, MissingnessNeuralNet, HistBoostEnsembler
+            one of RidgeRegressor, HistBoostRegressor, MissingnessNeuralNet,
+            HistBoostEnsembler, or NeuralNetEnsembler
         n_folds: int
             number of folds over which to cross-validate
         **kwargs: dict
@@ -25,7 +26,7 @@ class Validator:
         self.model_type = model_type
         self.n_folds = n_folds
         self.models = [getattr(kaggle_models, model_type)(**kwargs) for _ in range(n_folds)]
-        if model_type != "HistBoostEnsembler":
+        if not model_type in ["HistBoostEnsembler", "NeuralNetEnsembler"]:
             self.data_processors = [DataProcessor(model_type) for _ in range(n_folds)]
 
     def fit(self, df: pd.DataFrame) -> None:
@@ -47,7 +48,7 @@ class Validator:
             df_train = df.query(f"cv_fold != @cv_fold")
             df_test = df.query(f"cv_fold == @cv_fold")
 
-            if self.model_type != "HistBoostEnsembler":
+            if not self.model_type in ["HistBoostEnsembler", "NeuralNetEnsembler"]:
                 x_train, y_train = self.data_processors[cv_fold](df_train)
                 x_test, y_test = self.data_processors[cv_fold](df_test)
                 self.models[cv_fold].fit(x_train, y_train)
