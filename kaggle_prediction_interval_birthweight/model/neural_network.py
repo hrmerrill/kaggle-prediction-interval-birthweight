@@ -306,7 +306,7 @@ class MissingnessNeuralNetRegressor:
 
     def __init__(
         self,
-        units_list: List[int] = [200, 200, 200],
+        units_list: List[int] = [100, 200, 400, 800, 1600, 400],
         n_components: int = 3,
         dropout_rate: float = 0.3,
         bayesian: bool = False,
@@ -537,7 +537,7 @@ class MissingnessNeuralNetClassifier:
 
     def __init__(
         self,
-        units_list: List[int] = [200, 200, 200],
+        units_list: List[int] = [100, 200, 400, 800, 1600],
         n_components: int = 3,
         dropout_rate: float = 0.3,
         batch_size: int = 1000,

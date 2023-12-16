@@ -21,11 +21,12 @@ class HistBoostRegressor:
         alpha: float
             significance level for prediction intervals
         """
-        param_grid = [
-            {"max_bins": [10, 50, 255]},
-            {"max_depth": [3, 10, None]},
-            {"min_samples_leaf": [20, 50, 200]},
-        ]
+        param_grid = {
+            "max_leaf_nodes": [50, None],
+            "max_depth": [10, None],
+            "min_samples_leaf": [10, 50],
+            "learning_rate": [0.1, 0.01],
+        }
         self.lower_regressor = GridSearchCV(
             estimator=HistGradientBoostingRegressor(loss="quantile", quantile=(1 - alpha) / 2),
             param_grid=param_grid,

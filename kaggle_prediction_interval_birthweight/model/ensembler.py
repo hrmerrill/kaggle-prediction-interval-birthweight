@@ -139,7 +139,7 @@ class BaseEnsembler:
                 xnc_train, ync_train, n_categories=self.nnc_data_processor.n_bins
             )
             nnc_modes = self.nnc_data_processor.bin_values[
-                self.nn_classifiers[k].model.predict(xnc_test).argmax()
+                self.nn_classifiers[k].model.predict(xnc_test).argmax(axis=1)
             ]
             nnc_lower, nnc_upper = self.nn_classifiers[k].predict_intervals(
                 xnc_test, bin_values=self.nnc_data_processor.bin_values
@@ -165,12 +165,12 @@ class HistBoostEnsembler(BaseEnsembler):
         """
         super(HistBoostEnsembler, self).__init__(**kwargs)
 
-        param_grid = [
-            {"max_bins": [50, 255]},
-            {"max_depth": [3, 10, None]},
-            {"min_samples_leaf": [20, 50, 200]},
-            {"learning_rate": [0.1, 0.01]},
-        ]
+        param_grid = {
+            "max_leaf_nodes": [50, None],
+            "max_depth": [10, None],
+            "min_samples_leaf": [10, 50],
+            "learning_rate": [0.1, 0.01],
+        }
         self.lower_regressor = GridSearchCV(
             estimator=HistGradientBoostingRegressor(quantile=(1 - self.alpha) / 2, loss="quantile"),
             param_grid=param_grid,
@@ -241,7 +241,7 @@ class HistBoostEnsembler(BaseEnsembler):
             nc, ns, nk, nt = self.nn_regressors[k].model(xn).numpy().T
             nl, nu = self.nn_regressors[k].predict_intervals(xn)
             nncm = self.nnc_data_processor.bin_values[
-                self.nn_classifiers[k].model.predict(xnc).argmax()
+                self.nn_classifiers[k].model.predict(xnc).argmax(axis=1)
             ]
             nncl, nncu = self.nn_classifiers[k].predict_intervals(
                 xnc, self.nnc_data_processor.bin_values
@@ -352,7 +352,7 @@ class NeuralNetEnsembler(BaseEnsembler):
             nc, ns, nk, nt = self.nn_regressors[k].model(xn).numpy().T
             nl, nu = self.nn_regressors[k].predict_intervals(xn)
             nncm = self.nnc_data_processor.bin_values[
-                self.nn_classifiers[k].model.predict(xnc).argmax()
+                self.nn_classifiers[k].model.predict(xnc).argmax(axis=1)
             ]
             nncl, nncu = self.nn_classifiers[k].predict_intervals(
                 xnc, self.nnc_data_processor.bin_values

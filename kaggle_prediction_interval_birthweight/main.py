@@ -4,7 +4,8 @@ import pandas as pd
 import typer
 
 from kaggle_prediction_interval_birthweight.model.neural_network import (
-    MissingnessNeuralNetRegressor, SOFTPLUS_SCALE
+    SOFTPLUS_SCALE,
+    MissingnessNeuralNetRegressor,
 )
 from kaggle_prediction_interval_birthweight.model.sampling_utils import np_softplus_inv
 from kaggle_prediction_interval_birthweight.workflow.validation import Validator
@@ -72,17 +73,20 @@ def create_hail_mary_submission(
     test_data = pd.read_csv(test_data_path)
 
     all_types = [
-        "NeuralNetEnsembler",
-        "HistBoostEnsembler",
+        "RidgeRegressor",
+        "HistBoostRegressor",
         "MissingnessNeuralNetRegressor",
         "MissingnessNeuralNetClassifier",
-        "HistBoostRegressor",
-        "RidgeRegressor",
+        "HistBoostEnsembler",
+        "NeuralNetEnsembler",
     ]
     train_ensemble, test_ensemble = [], []
     for model_type in all_types:
         validator = Validator(model_type)
         validator.fit(train_data)
+
+        print(f"{model_type} performance:")
+        validator.print_performance_summary()
 
         lower_train, upper_train = validator.predict_intervals(train_data)
         lower_test, upper_test = validator.predict_intervals(test_data)
@@ -90,6 +94,7 @@ def create_hail_mary_submission(
         test_data[["id"]].assign(pi_lower=lower_test, pi_upper=upper_test).to_csv(
             LOCAL_DIR + f"submission_{model_type}.csv", index=False
         )
+        print("Submission file saved to: \n" + LOCAL_DIR + f"submission_{model_type}.csv")
 
         train_ensemble + [lower_train / SOFTPLUS_SCALE, upper_train / SOFTPLUS_SCALE]
         test_ensemble + [lower_test / SOFTPLUS_SCALE, upper_test / SOFTPLUS_SCALE]
@@ -100,7 +105,7 @@ def create_hail_mary_submission(
     test_ensemble = np.hstack([x.reshape((-1, 1)) for x in test_ensemble])
     train_y = np_softplus_inv(train_data["DBWT"] / SOFTPLUS_SCALE)
 
-    model = MissingnessNeuralNetRegressor(bayesian=True, fit_tail=True)
+    model = MissingnessNeuralNetRegressor(bayesian=True, fit_tail=False)
     model.fit(train_ensemble, train_y)
     lower, upper = model.predict_intervals(test_ensemble, alpha=0.9, n_samples=10000)
 
