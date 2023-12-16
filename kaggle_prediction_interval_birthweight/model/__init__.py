@@ -7,6 +7,7 @@ from kaggle_prediction_interval_birthweight.model.linear_regression import Ridge
 from kaggle_prediction_interval_birthweight.model.neural_network import (
     MissingnessNeuralNetClassifier,
     MissingnessNeuralNetRegressor,
+    MissingnessNeuralNetEIM,
 )
 
 __all__ = [
@@ -14,6 +15,7 @@ __all__ = [
     "HistBoostRegressor",
     "MissingnessNeuralNetRegressor",
     "MissingnessNeuralNetClassifier",
+    "MissingnessNeuralNetEIM",
     "HistBoostEnsembler",
     "NeuralNetEnsembler",
 ]

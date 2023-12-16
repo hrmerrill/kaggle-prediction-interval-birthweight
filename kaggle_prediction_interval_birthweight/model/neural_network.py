@@ -301,6 +301,49 @@ def shash_loss(y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
     return -llk
 
 
+@tf.function
+def eim_loss(
+    y_true: tf.Tensor, y_pred: tf.Tensor, alpha: float = 0.9, delta: float = 0.03
+) -> tf.Tensor:
+    """
+    Compute the Expanded Interval Minimization loss.
+
+    https://arxiv.org/pdf/1806.11222.pdf Eqns 11-14
+
+    Parameters
+    ----------
+    y_true: tf.Tensor
+        Observation tensor
+    y_pred: tf.Tensor
+        Interval predictions (2 columns, first column >= second)
+    alpha: float
+        Desired coverage percentage of interval predictions
+    delta: float
+        Eqn 14. Expansion factor is an average of the [alpha - delta, alpha + delta] quantiles
+
+
+    Returns
+    -------
+    tf.Tensor
+        EIM loss
+    """
+    widths = y_pred[:, 1] - y_pred[:, 0]
+    expansion_vals = tf.sort(
+        tf.math.abs((y_pred[:, 1] + y_pred[:, 0] - 2.0 * tf.squeeze(y_true)) / widths),
+        direction="ASCENDING",
+    )
+    lower_q_index = tf.round(tf.cast(tf.shape(y_pred)[0] - 1, dtype=tf.float32) * (alpha - delta))
+    upper_q_index = tf.round(tf.cast(tf.shape(y_pred)[0] - 1, dtype=tf.float32) * (alpha + delta))
+    lower_k = expansion_vals[tf.cast(lower_q_index, dtype=tf.int32)]
+    upper_k = expansion_vals[tf.cast(upper_q_index, dtype=tf.int32)]
+    keepers = tf.cast(
+        tf.where(expansion_vals > upper_k, 0, tf.where(expansion_vals < lower_k, 0, 1)),
+        dtype=tf.float32,
+    )
+    k_b = tf.reduce_sum(keepers * expansion_vals) / tf.reduce_sum(keepers)
+    return k_b * widths
+
+
 class MissingnessNeuralNetRegressor:
     """Class for neural network regressor that can handle missing values."""
 
@@ -696,3 +739,182 @@ class MissingnessNeuralNetClassifier:
             upper_inds.append(upper_ind)
         lower, upper = bin_values[lower_inds], bin_values[upper_inds]
         return lower, upper
+
+
+class MissingnessNeuralNetEIM:
+    """Class for neural network interval predictor that can handle missing values."""
+
+    def __init__(
+        self,
+        units_list: List[int] = [100, 200, 400, 800, 1600, 400],
+        n_components: int = 3,
+        dropout_rate: float = 0.3,
+        batch_size: int = 1000,
+        alpha: float = 0.9,
+        n_epochs: int = 1000,
+        verbose: int = 0,
+    ) -> None:
+        """
+        Parameters
+        ----------
+        units_list: int
+            number of units in each hidden layer (excluding input and output layers)
+        n_components: int
+            number of components of the gaussian mixture distribution of the DenseMissing layer
+        dropout_rate: float
+            dropout rate for regularization
+        batch_size: int
+            minibatch size for gradient descent
+        alpha: float
+            Desired coverage level of predicted intervals
+        n_epochs: int
+            number of epochs for training the model
+        verbose: bool
+            controls the verbosity during training (passed to tf.model.fit())
+        """
+        self.units_list = units_list
+        self.n_components = n_components
+        self.dropout_rate = dropout_rate
+        self.batch_size = batch_size
+        self.alpha = alpha
+        self.n_epochs = n_epochs
+        self.verbose = verbose
+
+    def build_model(self, X: np.ndarray) -> tf.keras.models.Model:
+        """
+        Build the model.
+
+        Parameters
+        ----------
+        X: np.ndarray
+            Design matrix containing features
+
+        Returns
+        -------
+        tf.keras.models.Model
+            the uncompiled tensorflow model.
+        """
+        missingness_present = np.isnan(X).any()
+        inputs = tf.keras.layers.Input(shape=(X.shape[-1],))
+
+        # first layer must be DenseMissing to accomodate missing values
+        if missingness_present:
+            next_output = DenseMissing(units=self.units_list[0], n_components=self.n_components)(
+                inputs
+            )
+            skip_output = DenseMissing(units=self.units_list[-1], n_components=self.n_components)(
+                inputs
+            )
+        else:
+            next_output = tf.keras.layers.Dense(units=self.units_list[0], activation=tf.nn.relu)(
+                inputs
+            )
+            skip_output = tf.keras.layers.Dense(units=self.units_list[-1], activation=tf.nn.relu)(
+                inputs
+            )
+        next_output = tf.keras.layers.BatchNormalization(scale=False)(next_output)
+        next_output = tf.keras.layers.Dropout(self.dropout_rate)(next_output)
+
+        if len(self.units_list) > 1:
+            for units in self.units_list[1:]:
+                # these can be standard layers, there are no missing values from DenseMissing
+                next_output = tf.keras.layers.Dense(units=units, activation=tf.nn.relu)(next_output)
+                next_output = tf.keras.layers.BatchNormalization()(next_output)
+                next_output = tf.keras.layers.Dropout(self.dropout_rate)(next_output)
+        next_output = next_output + skip_output
+
+        # the final layers for the lower and upper bounds
+        pred_lower = tf.keras.layers.Dense(units=1, activation="linear")(next_output)
+        pred_upper = pred_lower + tf.keras.layers.Dense(units=1, activation=tf.math.softplus)(
+            next_output
+        )
+        output_layer = tf.keras.layers.Concatenate()([pred_lower, pred_upper])
+        model = tf.keras.models.Model(inputs=inputs, outputs=output_layer)
+        return model
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
+        """
+        Fit the model.
+
+        Parameters
+        ----------
+        X: np.ndarray
+            Design matrix containing features
+        y: np.ndarray
+            Array of response values
+        """
+        x_train, x_val, y_train, y_val = train_test_split(X, y, random_state=1, test_size=0.3)
+
+        # start with a blank model and pretrain it to something more or less useful
+        print("Beginning warm-start.")
+        blank_model = self.build_model(X)
+        warmup_loss = lambda y, p_y: (y - 1 - p_y[:, 0]) ** 2 + (y + 1 - p_y[:, 1]) ** 2
+        blank_model.compile(optimizer=tf.keras.optimizers.legacy.Adam(0.003), loss=warmup_loss)
+        blank_model.fit(
+            x=tf.convert_to_tensor(x_train),
+            y=tf.convert_to_tensor(y_train),
+            batch_size=self.batch_size,
+            epochs=10,
+            shuffle=True,
+            verbose=0,
+        )
+
+        # use this model as a warm-start for the EIM model
+        print("Training warmed-up model.")
+        self.model = self.build_model(X)
+        self.model.set_weights(blank_model.get_weights())
+        eim_alpha_loss = lambda y, p_y: eim_loss(y, p_y, alpha=self.alpha)
+        self.model.compile(
+            optimizer=tf.keras.optimizers.legacy.Adam(
+                learning_rate=tf.optimizers.schedules.CosineDecay(
+                    initial_learning_rate=0.0001,
+                    warmup_target=0.0003,
+                    warmup_steps=int(x_train.shape[0] / self.batch_size * self.n_epochs / 3),
+                    decay_steps=int(2 * x_train.shape[0] / self.batch_size * self.n_epochs / 3),
+                    alpha=0.0,
+                )
+            ),
+            loss=eim_alpha_loss,
+        )
+
+        self.model.fit(
+            x=tf.convert_to_tensor(x_train),
+            y=tf.convert_to_tensor(y_train),
+            validation_data=(x_val, y_val),
+            batch_size=self.batch_size,
+            epochs=self.n_epochs,
+            verbose=self.verbose,
+            shuffle=True,
+            callbacks=[
+                tf.keras.callbacks.EarlyStopping(
+                    patience=10, restore_best_weights=True, min_delta=0.0001
+                ),
+                tf.keras.callbacks.TerminateOnNaN(),
+            ],
+        )
+        pred_val = self.model.predict(x_val)
+        self.expansion_factor = np.quantile(
+            (pred_val[:, 1] + pred_val[:, 0] - 2 * y_val.squeeze())
+            / (pred_val[:, 1] - pred_val[:, 0]),
+            self.alpha,
+        )
+
+    def predict_intervals(self, X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Predict the alpha * 100% interval for birthweight.
+
+        Parameters
+        ----------
+        X: np.ndarray
+            the design matrix used by self.fit(X, y)
+
+        Returns
+        -------
+        Tuple
+            the arrays corresponding to the lower and upper bounds, respectively
+        """
+        lower, upper = self.model.predict(X).T
+        midpoint = (lower + upper) / 2
+        lower = (lower - midpoint) * self.expansion_factor + midpoint
+        upper = (upper - midpoint) * self.expansion_factor + midpoint
+        return np_softplus(lower) * SOFTPLUS_SCALE, np_softplus(upper) * SOFTPLUS_SCALE

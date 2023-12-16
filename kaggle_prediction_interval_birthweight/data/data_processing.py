@@ -31,9 +31,9 @@ class DataProcessor:
         Parameters
         ----------
         model_type: str
-            One of "RidgeRegressor", "HistBoostRegressor", "MissingnessNeuralNetRegressor", or
-            "MissingnessNeuralNetClassifier". Determines how data are imputed and standardized
-            before modeling.
+            One of "RidgeRegressor", "HistBoostRegressor", "MissingnessNeuralNetRegressor",
+            "MissingnessNeuralNetEIM", or "MissingnessNeuralNetClassifier". Determines how data
+            are imputed and standardized before modeling.
         standardization_parameters: Dict
             Precomputed columnwise means and sds or decorrelation matrix, if already computed.
             None during training, but at test time these values should be passed in.
@@ -49,6 +49,7 @@ class DataProcessor:
             "HistBoostRegressor",
             "MissingnessNeuralNetRegressor",
             "MissingnessNeuralNetClassifier",
+            "MissingnessNeuralNetEIM",
         ]
         if model_type not in allowed_model_types:
             raise NotImplementedError(f"Supported model_type values: {allowed_model_types}")
@@ -145,6 +146,7 @@ class DataProcessor:
             elif self.model_type in [
                 "MissingnessNeuralNetRegressor",
                 "MissingnessNeuralNetClassifier",
+                "MissingnessNeuralNetEIM",
             ]:
                 replacement = None
             df.loc[df[feature].isin(missing_code), feature] = replacement
@@ -223,6 +225,7 @@ class DataProcessor:
             "RidgeRegressor",
             "MissingnessNeuralNetRegressor",
             "MissingnessNeuralNetClassifier",
+            "MissingnessNeuralNetEIM",
         ]:
             for feature in ["CIG_0", "PRIORDEAD", "PRIORLIVE", "PRIORTERM", "RF_CESARN"]:
                 df[feature] = np.log(df[feature] + 0.1)
@@ -245,8 +248,12 @@ class DataProcessor:
                 self.standardization_parameters["r_matrix"]
             )
 
-        # for the neural network, we will standardize without decorrelating
-        elif self.model_type in ["MissingnessNeuralNetRegressor", "MissingnessNeuralNetClassifier"]:
+        # for the neural networks, we will standardize without decorrelating
+        elif self.model_type in [
+            "MissingnessNeuralNetRegressor",
+            "MissingnessNeuralNetClassifier",
+            "MissingnessNeuralNetEIM",
+        ]:
             if self.standardization_parameters is None:
                 self.standardization_parameters = {}
                 self.standardization_parameters["means"] = np.nanmean(x_numeric, axis=0)
@@ -259,7 +266,11 @@ class DataProcessor:
             ) / self.standardization_parameters["sds"]
 
         # tell the neural network how many missing points
-        if self.model_type in ["MissingnessNeuralNetRegressor", "MissingnessNeuralNetClassifier"]:
+        if self.model_type in [
+            "MissingnessNeuralNetRegressor",
+            "MissingnessNeuralNetClassifier",
+            "MissingnessNeuralNetEIM",
+        ]:
             num_missing = np.isnan(x_numeric).sum(axis=1).reshape(-1, 1)
             x_numeric = np.hstack([x_numeric, num_missing])
 
@@ -301,6 +312,7 @@ class DataProcessor:
             if self.model_type in [
                 "MissingnessNeuralNetRegressor",
                 "MissingnessNeuralNetClassifier",
+                "MissingnessNeuralNetEIM",
             ]:
                 x_one_hot_col = x_one_hot_col * np.where(df[feature].isna(), np.nan, 1.0).reshape(
                     (-1, 1)

@@ -16,7 +16,8 @@ class Validator:
         Parameters
         ----------
         model_type: str
-            one of RidgeRegressor, HistBoostRegressor, MissingnessNeuralNet,
+            one of RidgeRegressor, HistBoostRegressor, MissingnessNeuralNetRegressor,
+            MissingnessNeuralNetEIM, MissingnessNeuralNetClassifier,
             HistBoostEnsembler, or NeuralNetEnsembler
         n_folds: int
             number of folds over which to cross-validate
