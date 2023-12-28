@@ -22,24 +22,33 @@ class HistBoostRegressor:
             significance level for prediction intervals
         """
         param_grid = {
-            "max_leaf_nodes": [50, None],
-            "max_depth": [10, None],
+            "max_leaf_nodes": [20, None],
+            "max_depth": [5, None],
             "min_samples_leaf": [10, 50],
-            "learning_rate": [0.1, 0.01],
+            "l2_regularization": [0, 0.1],
+            "learning_rate": [1, 0.1, 0.03],
         }
         self.lower_regressor = GridSearchCV(
-            estimator=HistGradientBoostingRegressor(loss="quantile", quantile=(1 - alpha) / 2),
+            estimator=HistGradientBoostingRegressor(
+                loss="quantile",
+                quantile=(1 - alpha) / 2,
+                max_iter=1000,
+            ),
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=(1 - alpha) / 2)),
             verbose=1,
+            cv=3,
         )
         self.upper_regressor = GridSearchCV(
             estimator=HistGradientBoostingRegressor(
-                loss="quantile", quantile=alpha + (1 - alpha) / 2
+                loss="quantile",
+                quantile=alpha + (1 - alpha) / 2,
+                max_iter=1000,
             ),
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=alpha + (1 - alpha) / 2)),
             verbose=1,
+            cv=3,
         )
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:

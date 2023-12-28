@@ -85,6 +85,7 @@ def create_hail_mary_submission(
     ]
     train_ensemble, test_ensemble = [], []
     for model_type in all_types:
+        print(f"Beginning training the {model_type}:")
         validator = Validator(model_type)
         validator.fit(train_data)
 
