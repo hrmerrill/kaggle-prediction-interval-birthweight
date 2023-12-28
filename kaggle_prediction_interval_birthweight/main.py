@@ -1,8 +1,10 @@
 from typing import Optional
 
 import pandas as pd
+import numpy as np
 import typer
 
+from kaggle_prediction_interval_birthweight.model.hist_gradient_boosting import HistBoostRegressor
 from kaggle_prediction_interval_birthweight.model.neural_network import (
     SOFTPLUS_SCALE,
     MissingnessNeuralNetRegressor,
@@ -105,11 +107,22 @@ def create_hail_mary_submission(
     test_ensemble = np.hstack([x.reshape((-1, 1)) for x in test_ensemble])
     train_y = np_softplus_inv(train_data["DBWT"] / SOFTPLUS_SCALE)
 
-    model = MissingnessNeuralNetRegressor(bayesian=True, fit_tail=False)
-    model.fit(train_ensemble, train_y)
-    lower, upper = model.predict_intervals(test_ensemble, alpha=0.9, n_samples=10000)
+    print("Training the NN hail mary.")
+    model_nn = MissingnessNeuralNetRegressor(bayesian=True, fit_tail=False)
+    model_nn.fit(train_ensemble, train_y)
+    lower_nn, upper_nn = model_nn.predict_intervals(test_ensemble, alpha=0.9, n_samples=2000)
 
-    test_data[["id"]].assign(pi_lower=lower, pi_upper=upper).to_csv(
-        LOCAL_DIR + f"submission_hail_mary.csv", index=False
+    test_data[["id"]].assign(pi_lower=lower_nn, pi_upper=upper_nn).to_csv(
+        LOCAL_DIR + f"submission_hail_mary_nn.csv", index=False
     )
-    print("Submission file saved to: \n" + LOCAL_DIR + f"submission_hail_mary.csv")
+    print("Submission file saved to: \n" + LOCAL_DIR + f"submission_hail_mary_nn.csv")
+
+    print("Training the histboost hail mary.")
+    model_hb = HistBoostRegressor()
+    model_hb.fit(train_ensemble, train_data["DBWT"])
+    lower_hb, upper_hb = model_hb.predict_intervals(test_ensemble)
+
+    test_data[["id"]].assign(pi_lower=lower_hb, pi_upper=upper_hb).to_csv(
+        LOCAL_DIR + f"submission_hail_mary_hb.csv", index=False
+    )
+    print("Submission file saved to: \n" + LOCAL_DIR + f"submission_hail_mary_hb.csv")

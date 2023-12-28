@@ -16,6 +16,7 @@ from kaggle_prediction_interval_birthweight.model.linear_regression import Ridge
 from kaggle_prediction_interval_birthweight.model.neural_network import (
     MissingnessNeuralNetClassifier,
     MissingnessNeuralNetRegressor,
+    MissingnessNeuralNetEIM,
 )
 from kaggle_prediction_interval_birthweight.model.sampling_utils import (
     compute_highest_density_interval,
@@ -29,7 +30,7 @@ class BaseEnsembler:
     Base ensemble model class with common methods.
     """
 
-    def __init__(self, n_folds: int = 3, alpha: float = 0.9) -> None:
+    def __init__(self, n_folds: int = 2, alpha: float = 0.9) -> None:
         """
         Parameters
         ----------
@@ -46,13 +47,19 @@ class BaseEnsembler:
             MissingnessNeuralNetRegressor(bayesian=False, fit_tail=True) for _ in range(n_folds)
         ]
         self.nn_classifiers = [MissingnessNeuralNetClassifier() for _ in range(n_folds)]
+        self.nn_eims = [MissingnessNeuralNetEIM() for _ in range(n_folds)]
 
         ridge_predictions = ["lower_ridge", "mean_ridge", "upper_ridge"]
         boost_predictions = ["lower_boost", "upper_boost"]
         nn_predictions = ["center_nn", "scale_nn", "skew_nn", "tail_nn", "lower_nn", "upper_nn"]
         nnc_predictions = ["lower_nnc", "mode_nnc", "upper_nnc"]
+        eim_predictions = ["lower_eim", "upper_eim"]
         self.upstream_predictions = (
-            ridge_predictions + boost_predictions + nn_predictions + nnc_predictions
+            ridge_predictions
+            + boost_predictions
+            + nn_predictions
+            + nnc_predictions
+            + eim_predictions
         )
 
     def prepare_data(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -76,10 +83,12 @@ class BaseEnsembler:
         self.boost_data_processor = DataProcessor(model_type="HistBoostRegressor")
         self.nn_data_processor = DataProcessor(model_type="MissingnessNeuralNetRegressor")
         self.nnc_data_processor = DataProcessor(model_type="MissingnessNeuralNetClassifier")
+        self.eim_data_processor = DataProcessor(model_type="MissingnessNeuralNetEIM")
         _ = self.ridge_data_processor(df)
         _ = self.boost_data_processor(df)
         _ = self.nn_data_processor(df)
         _ = self.nnc_data_processor(df)
+        _ = self.eim_data_processor(df)
 
         # create some information for holding new data in the data frame
         df["fold"] = np.random.choice(self.n_folds, df.shape[0])
@@ -106,6 +115,9 @@ class BaseEnsembler:
 
             xnc_train, ync_train = self.nnc_data_processor(df_train)
             xnc_test = self.nnc_data_processor(df_test.drop("DBWT", axis=1))
+
+            xeim_train, yeim_train = self.eim_data_processor(df_train)
+            xeim_test = self.eim_data_processor(df_test.drop("DBWT", axis=1))
 
             print("Training the ridge regression model.")
             self.ridge_regressors[k].fit(xr_train, yr_train)
@@ -147,6 +159,12 @@ class BaseEnsembler:
             df.loc[df["fold"] == k, "lower_nnc"] = nnc_lower.squeeze() / SOFTPLUS_SCALE
             df.loc[df["fold"] == k, "mode_nnc"] = nnc_modes.squeeze() / SOFTPLUS_SCALE
             df.loc[df["fold"] == k, "upper_nnc"] = nnc_upper.squeeze() / SOFTPLUS_SCALE
+
+            print("Training the neural network EIM.")
+            self.nn_eims[k].fit(xeim_train, yeim_train)
+            eim_lower, eim_upper = self.nn_eims[k].predict_intervals(xeim_test)
+            df.loc[df["fold"] == k, "lower_eim"] = eim_lower.squeeze() / SOFTPLUS_SCALE
+            df.loc[df["fold"] == k, "upper_eim"] = eim_upper.squeeze() / SOFTPLUS_SCALE
 
         return df
 
@@ -232,6 +250,7 @@ class HistBoostEnsembler(BaseEnsembler):
         xb = self.boost_data_processor(df)
         xn = self.nn_data_processor(df)
         xnc = self.nnc_data_processor(df)
+        xeim = self.eim_data_processor(df)
 
         lowers, uppers = [], []
         for k in range(self.n_folds):
@@ -246,6 +265,7 @@ class HistBoostEnsembler(BaseEnsembler):
             nncl, nncu = self.nn_classifiers[k].predict_intervals(
                 xnc, self.nnc_data_processor.bin_values
             )
+            el, eu = self.nn_eims[k].predict_intervals(xeim)
             x = np.hstack(
                 [
                     rl.reshape((-1, 1)) / SOFTPLUS_SCALE,
@@ -262,6 +282,8 @@ class HistBoostEnsembler(BaseEnsembler):
                     nncl.reshape((-1, 1)) / SOFTPLUS_SCALE,
                     nncm.reshape((-1, 1)) / SOFTPLUS_SCALE,
                     nncu.reshape((-1, 1)) / SOFTPLUS_SCALE,
+                    el.reshape((-1, 1)) / SOFTPLUS_SCALE,
+                    eu.reshape((-1, 1)) / SOFTPLUS_SCALE,
                 ]
             )
             lower = self.lower_regressor.predict(np.hstack([x, xb]))
@@ -279,7 +301,7 @@ class NeuralNetEnsembler(BaseEnsembler):
     Create an ensemble model that combines the other models into a MissingnessNeuralNetRegressor.
     """
 
-    def __init__(self, n_folds: int = 3, alpha: float = 0.9, **kwargs) -> None:
+    def __init__(self, n_folds: int = 2, alpha: float = 0.9, **kwargs) -> None:
         """
         Parameters
         ----------
@@ -343,6 +365,7 @@ class NeuralNetEnsembler(BaseEnsembler):
         xb = self.boost_data_processor(df)
         xn = self.nn_data_processor(df)
         xnc = self.nnc_data_processor(df)
+        xeim = self.eim_data_processor(df)
 
         predicted_samples_list = []
         for k in range(self.n_folds):
@@ -357,6 +380,7 @@ class NeuralNetEnsembler(BaseEnsembler):
             nncl, nncu = self.nn_classifiers[k].predict_intervals(
                 xnc, self.nnc_data_processor.bin_values
             )
+            el, eu = self.nn_eims[k].predict_intervals(xeim)
             x = np.hstack(
                 [
                     rl.reshape((-1, 1)) / SOFTPLUS_SCALE,
@@ -373,12 +397,14 @@ class NeuralNetEnsembler(BaseEnsembler):
                     nncl.reshape((-1, 1)) / SOFTPLUS_SCALE,
                     nncm.reshape((-1, 1)) / SOFTPLUS_SCALE,
                     nncu.reshape((-1, 1)) / SOFTPLUS_SCALE,
+                    el.reshape((-1, 1)) / SOFTPLUS_SCALE,
+                    eu.reshape((-1, 1)) / SOFTPLUS_SCALE,
                 ]
             )
             x_inputs = np.hstack([x, xn])
 
             predicted_samples = np.random.randn(n_samples, x_inputs.shape[0])
-            for i, sample in tqdm(enumerate(predicted_samples)):
+            for i, sample in tqdm(enumerate(predicted_samples), desc="Sampling from ensembler"):
                 center, spread, skew, tail = self.neural_net.model(x_inputs).numpy().T
                 spread = spread + 1e-3
                 predicted_samples[i] = center + (tail * spread) * (

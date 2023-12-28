@@ -349,7 +349,7 @@ class MissingnessNeuralNetRegressor:
 
     def __init__(
         self,
-        units_list: List[int] = [100, 200, 400, 800, 1600, 400],
+        units_list: List[int] = [200, 200, 200],
         n_components: int = 3,
         dropout_rate: float = 0.3,
         bayesian: bool = False,
@@ -521,7 +521,9 @@ class MissingnessNeuralNetRegressor:
         """
         if self.bayesian:
             predicted_samples = np.random.randn(n_samples, X.shape[0])
-            for i, sample in tqdm(enumerate(predicted_samples)):
+            for i, sample in tqdm(
+                enumerate(predicted_samples), total=n_samples, desc="Sampling from model"
+            ):
                 model_outputs = self.model(X).numpy()
                 if model_outputs.shape[-1] == 4:
                     center, spread, skew, tail = model_outputs.T
@@ -580,7 +582,7 @@ class MissingnessNeuralNetClassifier:
 
     def __init__(
         self,
-        units_list: List[int] = [100, 200, 400, 800, 1600],
+        units_list: List[int] = [200, 200, 200],
         n_components: int = 3,
         dropout_rate: float = 0.3,
         batch_size: int = 1000,
@@ -733,7 +735,7 @@ class MissingnessNeuralNetClassifier:
 
         probs = self.model.predict(X)
         lower_inds, upper_inds = [], []
-        for probs_row in tqdm(probs, total=probs.shape[0]):
+        for probs_row in tqdm(probs, total=probs.shape[0], desc="Searching for smallest interval"):
             lower_ind, upper_ind = get_smallest_interval_rowwise(probs_row)
             lower_inds.append(lower_ind)
             upper_inds.append(upper_ind)
@@ -746,7 +748,7 @@ class MissingnessNeuralNetEIM:
 
     def __init__(
         self,
-        units_list: List[int] = [100, 200, 400, 800, 1600, 400],
+        units_list: List[int] = [200, 200, 200],
         n_components: int = 3,
         dropout_rate: float = 0.3,
         batch_size: int = 1000,
@@ -848,13 +850,18 @@ class MissingnessNeuralNetEIM:
         # start with a blank model and pretrain it to something more or less useful
         print("Beginning warm-start.")
         blank_model = self.build_model(X)
-        warmup_loss = lambda y, p_y: (y - 1 - p_y[:, 0]) ** 2 + (y + 1 - p_y[:, 1]) ** 2
+        lower_boundary = y.mean() - np.quantile(y, 0.05)
+        upper_boundary = np.quantile(y, 0.95) - y.mean()
+        warmup_loss = (
+            lambda y, p_y: (y - lower_boundary - p_y[:, 0]) ** 2
+            + (y + upper_boundary - p_y[:, 1]) ** 2
+        )
         blank_model.compile(optimizer=tf.keras.optimizers.legacy.Adam(0.003), loss=warmup_loss)
         blank_model.fit(
             x=tf.convert_to_tensor(x_train),
             y=tf.convert_to_tensor(y_train),
             batch_size=self.batch_size,
-            epochs=10,
+            epochs=100,
             shuffle=True,
             verbose=0,
         )
