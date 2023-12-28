@@ -31,7 +31,7 @@ def create_submission(
     model_type: str
         The type of model to use. One of RidgeRegressor, HistBoostRegressor,
         MissingnessNeuralNetRegressor, MissingnessNeuralNetClassifier,
-        HistBoostEnsembler, or NeuralNetEnsembler
+        MissingnessNeuralNetEIM, HistBoostEnsembler, or NeuralNetEnsembler
     train_data_path: str
         path to training data
     test_data_path: str
