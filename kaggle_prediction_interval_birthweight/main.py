@@ -20,7 +20,7 @@ app = typer.Typer()
 
 @app.command()
 def create_submission(
-    model_type: str = "RidgeRegressor",
+    model_type: str,
     train_data_path: str = LOCAL_DIR + "train.csv",
     test_data_path: str = LOCAL_DIR + "test.csv",
     output_path: Optional[str] = None,
@@ -79,6 +79,7 @@ def create_hail_mary_submission(
         "HistBoostRegressor",
         "MissingnessNeuralNetRegressor",
         "MissingnessNeuralNetClassifier",
+        "MissingnessNeuralNetEIM",
         "HistBoostEnsembler",
         "NeuralNetEnsembler",
     ]
@@ -107,7 +108,7 @@ def create_hail_mary_submission(
     test_ensemble = np.hstack([x.reshape((-1, 1)) for x in test_ensemble])
     train_y = np_softplus_inv(train_data["DBWT"] / SOFTPLUS_SCALE)
 
-    print("Training the NN hail mary.")
+    print("Training the hail mary neural network.")
     model_nn = MissingnessNeuralNetRegressor(bayesian=True, fit_tail=False)
     model_nn.fit(train_ensemble, train_y)
     lower_nn, upper_nn = model_nn.predict_intervals(test_ensemble, alpha=0.9, n_samples=2000)
@@ -117,7 +118,7 @@ def create_hail_mary_submission(
     )
     print("Submission file saved to: \n" + LOCAL_DIR + f"submission_hail_mary_nn.csv")
 
-    print("Training the histboost hail mary.")
+    print("Training the hail mary histboost regressor.")
     model_hb = HistBoostRegressor()
     model_hb.fit(train_ensemble, train_data["DBWT"])
     lower_hb, upper_hb = model_hb.predict_intervals(test_ensemble)
