@@ -733,6 +733,23 @@ files = [
 ]
 
 [[package]]
+name = "mapie"
+version = "0.7.0"
+description = "A scikit-learn-compatible module for estimating prediction intervals."
+optional = false
+python-versions = ">=3.7"
+files = [
+    {file = "MAPIE-0.7.0-py3-none-any.whl", hash = "sha256:2edfc18d205bb5654317e69fa8998c1d37749c5737f2e04f5fdf1eb96c7cc0a2"},
+    {file = "MAPIE-0.7.0.tar.gz", hash = "sha256:4c57ddaaec4509cc784ce50a2db1928656d00e94c5e563c36499efad0e2971db"},
+]
+
+[package.dependencies]
+numpy = ">=1.21"
+packaging = "*"
+scikit-learn = "*"
+scipy = "*"
+
+[[package]]
 name = "markdown"
 version = "3.5.1"
 description = "Python implementation of John Gruber's Markdown."
@@ -1851,4 +1868,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.11, <3.12"
-content-hash = "781491ea596752f5a932bf3b04b93fb9a137ed89509dd4e15b10772ddaa9ebf1"
+content-hash = "91d838922b5e4462c6a5b1e452b7941609443091869e9112108467a5952b3b9b"

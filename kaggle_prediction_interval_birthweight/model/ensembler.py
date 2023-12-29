@@ -2,9 +2,10 @@ from typing import List, Tuple
 
 import numpy as np
 import pandas as pd
+from mapie.quantile_regression import MapieQuantileRegressor
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.metrics import d2_pinball_score, make_scorer
-from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import GridSearchCV, train_test_split
 from tqdm import tqdm
 
 from kaggle_prediction_interval_birthweight.data.data_processing import (
@@ -212,6 +213,13 @@ class HistBoostEnsembler(BaseEnsembler):
             verbose=1,
             cv=3,
         )
+        self.median_regressor = GridSearchCV(
+            estimator=HistGradientBoostingRegressor(quantile=0.5, loss="quantile", max_iter=1000),
+            param_grid=param_grid,
+            scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=0.5)),
+            verbose=1,
+            cv=3,
+        )
 
     def fit(self, df: pd.DataFrame) -> None:
         """
@@ -232,8 +240,19 @@ class HistBoostEnsembler(BaseEnsembler):
             ]
         )
         y_ens = df["DBWT"].values.squeeze()
-        self.lower_regressor.fit(x_ens, y_ens)
-        self.upper_regressor.fit(x_ens, y_ens)
+        xtr, xval, ytr, yval = train_test_split(x_ens, y_ens, random_state=1, test_size=0.3)
+
+        self.lower_regressor.fit(xtr, ytr)
+        self.upper_regressor.fit(xtr, ytr)
+        self.median_regressor.fit(xtr, ytr)
+
+        print("Training the calibrator.")
+        self.calibrator = MapieQuantileRegressor(
+            [self.lower_regressor, self.upper_regressor, self.median_regressor],
+            alpha=1 - self.alpha,
+            cv="prefit",
+        )
+        self.calibrator.fit(xval, yval)
 
     def predict_intervals(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -293,8 +312,8 @@ class HistBoostEnsembler(BaseEnsembler):
                     eu.reshape((-1, 1)) / SOFTPLUS_SCALE,
                 ]
             )
-            lower = self.lower_regressor.predict(np.hstack([x, xb]))
-            upper = self.upper_regressor.predict(np.hstack([x, xb]))
+            _, intervals = self.calibrator.predict(np.hstack([x, xb]))
+            lower, upper = intervals.T
             lowers.append(lower)
             uppers.append(upper)
 
@@ -411,7 +430,9 @@ class NeuralNetEnsembler(BaseEnsembler):
             x_inputs = np.hstack([x, xn])
 
             predicted_samples = np.random.randn(n_samples, x_inputs.shape[0])
-            for i, sample in tqdm(enumerate(predicted_samples), desc="Sampling from ensembler"):
+            for i, sample in tqdm(
+                enumerate(predicted_samples), total=n_samples, desc="Sampling from ensembler"
+            ):
                 center, spread, skew, tail = self.neural_net.model(x_inputs).numpy().T
                 spread = spread + 1e-3
                 predicted_samples[i] = center + (tail * spread) * (
