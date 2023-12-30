@@ -1,9 +1,10 @@
 from typing import List, Tuple
 
 import numpy as np
+from mapie.regression import MapieQuantileRegressor
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.metrics import d2_pinball_score, make_scorer
-from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import GridSearchCV, train_test_split
 
 from kaggle_prediction_interval_birthweight.data.data_processing import SOFTPLUS_SCALE
 from kaggle_prediction_interval_birthweight.model.sampling_utils import np_softplus
@@ -21,6 +22,7 @@ class HistBoostRegressor:
         alpha: float
             significance level for prediction intervals
         """
+        self.alpha = alpha
         param_grid = {
             "max_leaf_nodes": [20, None],
             "max_depth": [5, None],
@@ -50,6 +52,13 @@ class HistBoostRegressor:
             verbose=1,
             cv=3,
         )
+        self.median_regressor = GridSearchCV(
+            estimator=HistGradientBoostingRegressor(quantile=0.5, loss="quantile", max_iter=1000),
+            param_grid=param_grid,
+            scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=0.5)),
+            verbose=1,
+            cv=3,
+        )
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         """
@@ -62,8 +71,16 @@ class HistBoostRegressor:
         y: np.ndarray
             Array of response values
         """
-        self.lower_regressor.fit(X, y.squeeze())
-        self.upper_regressor.fit(X, y.squeeze())
+        xtr, xval, ytr, yval = train_test_split(X, y, random_state=1, test_size=0.3)
+        self.lower_regressor.fit(xtr, ytr.squeeze())
+        self.upper_regressor.fit(xtr, ytr.squeeze())
+        self.median_regressor.fit(xtr, ytr.squeeze())
+        self.calibrator = MapieQuantileRegressor(
+            [self.lower_regressor, self.upper_regressor, self.median_regressor],
+            alpha=1 - self.alpha,
+            cv="prefit",
+        )
+        self.calibrator.fit(xval, yval.squeeze())
 
     def predict_intervals(self, X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -79,6 +96,8 @@ class HistBoostRegressor:
         Tuple
             the arrays corresponding to the lower and upper bounds, respectively
         """
-        lower = np_softplus(self.lower_regressor.predict(X)) * SOFTPLUS_SCALE
-        upper = np_softplus(self.upper_regressor.predict(X)) * SOFTPLUS_SCALE
+        _, intervals = self.calibrator.predict(X)
+        lower, upper = intervals.squeeze().T
+        lower = np_softplus(lower) * SOFTPLUS_SCALE
+        upper = np_softplus(upper) * SOFTPLUS_SCALE
         return lower.squeeze(), upper.squeeze()

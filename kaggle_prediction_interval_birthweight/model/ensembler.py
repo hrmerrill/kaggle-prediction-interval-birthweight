@@ -31,7 +31,7 @@ class BaseEnsembler:
     Base ensemble model class with common methods.
     """
 
-    def __init__(self, n_folds: int = 2, alpha: float = 0.9) -> None:
+    def __init__(self, n_folds: int = 3, alpha: float = 0.9) -> None:
         """
         Parameters
         ----------
@@ -242,9 +242,9 @@ class HistBoostEnsembler(BaseEnsembler):
         y_ens = df["DBWT"].values.squeeze()
         xtr, xval, ytr, yval = train_test_split(x_ens, y_ens, random_state=1, test_size=0.3)
 
-        self.lower_regressor.fit(xtr, ytr)
-        self.upper_regressor.fit(xtr, ytr)
-        self.median_regressor.fit(xtr, ytr)
+        self.lower_regressor.fit(xtr, ytr.squeeze())
+        self.upper_regressor.fit(xtr, ytr.squeeze())
+        self.median_regressor.fit(xtr, ytr.squeeze())
 
         print("Training the calibrator.")
         self.calibrator = MapieQuantileRegressor(
@@ -252,7 +252,7 @@ class HistBoostEnsembler(BaseEnsembler):
             alpha=1 - self.alpha,
             cv="prefit",
         )
-        self.calibrator.fit(xval, yval)
+        self.calibrator.fit(xval, yval.squeeze())
 
     def predict_intervals(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -313,7 +313,7 @@ class HistBoostEnsembler(BaseEnsembler):
                 ]
             )
             _, intervals = self.calibrator.predict(np.hstack([x, xb]))
-            lower, upper = intervals.T
+            lower, upper = intervals.squeeze().T
             lowers.append(lower)
             uppers.append(upper)
 
@@ -327,7 +327,7 @@ class NeuralNetEnsembler(BaseEnsembler):
     Create an ensemble model that combines the other models into a MissingnessNeuralNetRegressor.
     """
 
-    def __init__(self, n_folds: int = 2, alpha: float = 0.9, **kwargs) -> None:
+    def __init__(self, n_folds: int = 3, alpha: float = 0.9, **kwargs) -> None:
         """
         Parameters
         ----------

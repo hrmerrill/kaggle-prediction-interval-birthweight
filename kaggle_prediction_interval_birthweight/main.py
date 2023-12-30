@@ -100,8 +100,11 @@ def create_hail_mary_submission(
         )
         print("Submission file saved to: \n" + LOCAL_DIR + f"submission_{model_type}.csv")
 
-        train_ensemble + [lower_train / SOFTPLUS_SCALE, upper_train / SOFTPLUS_SCALE]
-        test_ensemble + [lower_test / SOFTPLUS_SCALE, upper_test / SOFTPLUS_SCALE]
+        train_ensemble = train_ensemble + [
+            lower_train / SOFTPLUS_SCALE,
+            upper_train / SOFTPLUS_SCALE,
+        ]
+        test_ensemble = test_ensemble + [lower_test / SOFTPLUS_SCALE, upper_test / SOFTPLUS_SCALE]
 
         print(f"{model_type} complete.")
 
