@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import Tuple
 
 import numpy as np
 from mapie.regression import MapieQuantileRegressor
@@ -7,7 +7,7 @@ from sklearn.metrics import d2_pinball_score, make_scorer
 from sklearn.model_selection import GridSearchCV, train_test_split
 
 from kaggle_prediction_interval_birthweight.data.data_processing import SOFTPLUS_SCALE
-from kaggle_prediction_interval_birthweight.model.sampling_utils import np_softplus
+from kaggle_prediction_interval_birthweight.model.utils import np_softplus
 
 
 class HistBoostRegressor:

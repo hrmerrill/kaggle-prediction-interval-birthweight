@@ -7,7 +7,7 @@ import pandas as pd
 from sklearn.preprocessing import OneHotEncoder
 
 from kaggle_prediction_interval_birthweight.model.constants import MISSING_CODE, VARIABLE_TYPE
-from kaggle_prediction_interval_birthweight.model.sampling_utils import np_softplus_inv
+from kaggle_prediction_interval_birthweight.model.utils import np_softplus_inv
 
 TIMESTAMP_COL_NAME = "DOB_TT"
 Y_MIN = 230
@@ -73,7 +73,7 @@ class DataProcessor:
         Returns
         -------
         pd.DataFrame
-            The same data frame with categorical features as strings and numerical features as floats.
+            df with categorical features as strings and numerical features as floats.
         """
         df = df.copy()
 

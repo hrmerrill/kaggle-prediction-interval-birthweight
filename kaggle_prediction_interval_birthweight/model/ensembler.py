@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import Tuple
 
 import numpy as np
 import pandas as pd
@@ -16,10 +16,10 @@ from kaggle_prediction_interval_birthweight.model.hist_gradient_boosting import 
 from kaggle_prediction_interval_birthweight.model.linear_regression import RidgeRegressor
 from kaggle_prediction_interval_birthweight.model.neural_network import (
     MissingnessNeuralNetClassifier,
-    MissingnessNeuralNetRegressor,
     MissingnessNeuralNetEIM,
+    MissingnessNeuralNetRegressor,
 )
-from kaggle_prediction_interval_birthweight.model.sampling_utils import (
+from kaggle_prediction_interval_birthweight.model.utils import (
     compute_highest_density_interval,
     np_softplus,
     np_softplus_inv,
@@ -101,8 +101,8 @@ class BaseEnsembler:
             print(f"Ensembler fold {k+1} of {self.n_folds} begins.")
 
             # split into train and test sets
-            df_train = df.query(f"fold != @k")
-            df_test = df.query(f"fold == @k")
+            df_train = df.query("fold != @k")
+            df_test = df.query("fold == @k")
 
             # prepare the data for both ridge and histboost regression
             xr_train, yr_train = self.ridge_data_processor(df_train)
@@ -317,8 +317,8 @@ class HistBoostEnsembler(BaseEnsembler):
             lowers.append(lower)
             uppers.append(upper)
 
-        lower = np.hstack([l.reshape((-1, 1)) for l in lowers]).mean(axis=1)
-        upper = np.hstack([u.reshape((-1, 1)) for u in uppers]).mean(axis=1)
+        lower = np.hstack([item.reshape((-1, 1)) for item in lowers]).mean(axis=1)
+        upper = np.hstack([item.reshape((-1, 1)) for item in uppers]).mean(axis=1)
         return lower.squeeze(), upper.squeeze()
 
 

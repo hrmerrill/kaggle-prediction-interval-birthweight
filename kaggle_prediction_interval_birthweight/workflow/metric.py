@@ -3,10 +3,10 @@ This code copied (then auto-formatted with black) from here:
 https://www.kaggle.com/datasets/carlmcbrideellis/winkler-interval-score-metric/
 """
 
-import pandas as pd
 import numpy as np
 
-# Notice that we use absolute values due to the possibility of 'quantile crossing' where lower > upper.
+# Notice that we use absolute values due to the possibility of
+# 'quantile crossing' where lower > upper.
 
 
 def WIS_and_coverage(y_true, lower, upper, alpha):
@@ -37,12 +37,18 @@ v_WIS_and_coverage = np.vectorize(WIS_and_coverage)
 
 def score(y_true, lower, upper, alpha):
     """
-    This is an implementation of the Winkler Interval score (https://otexts.com/fpp3/distaccuracy.html#winkler-score).
-    The mean over all of the individual Winkler Interval scores (MWIS) is returned, along with the coverage.
+    This is an implementation of the Winkler Interval score
+        (https://otexts.com/fpp3/distaccuracy.html#winkler-score).
+    The mean over all of the individual Winkler Interval scores (MWIS) is returned,
+        along with the coverage.
 
     See:
-    [1] Robert L. Winkler "A Decision-Theoretic Approach to Interval Estimation", Journal of the American Statistical Association, vol. 67, pp. 187-191 (1972) (https://doi.org/10.1080/01621459.1972.10481224)
-    [2] Tilmann Gneiting and Adrian E Raftery "Strictly Proper Scoring Rules, Prediction, and Estimation", Journal of the American Statistical Association, vol. 102, pp. 359-378 (2007) (https://doi.org/10.1198/016214506000001437) (Section 6.2)
+    [1] Robert L. Winkler "A Decision-Theoretic Approach to Interval Estimation",
+        Journal of the American Statistical Association, vol. 67, pp. 187-191 (1972)
+        (https://doi.org/10.1080/01621459.1972.10481224)
+    [2] Tilmann Gneiting and Adrian E Raftery "Strictly Proper Scoring Rules, Prediction, and
+        Estimation", Journal of the American Statistical Association, vol. 102, pp. 359-378 (2007)
+        (https://doi.org/10.1198/016214506000001437) (Section 6.2)
 
     Version: 1.0.3
     Author:  Carl McBride Ellis

@@ -1,7 +1,7 @@
 from typing import Optional
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 import typer
 
 from kaggle_prediction_interval_birthweight.model.hist_gradient_boosting import HistBoostRegressor
@@ -118,9 +118,9 @@ def create_hail_mary_submission(
     lower_nn, upper_nn = model_nn.predict_intervals(test_ensemble, alpha=0.9, n_samples=2000)
 
     test_data[["id"]].assign(pi_lower=lower_nn, pi_upper=upper_nn).to_csv(
-        LOCAL_DIR + f"submission_hail_mary_nn.csv", index=False
+        LOCAL_DIR + "submission_hail_mary_nn.csv", index=False
     )
-    print("Submission file saved to: \n" + LOCAL_DIR + f"submission_hail_mary_nn.csv")
+    print("Submission file saved to: \n" + LOCAL_DIR + "submission_hail_mary_nn.csv")
 
     print("Training the hail mary histboost regressor.")
     model_hb = HistBoostRegressor()
@@ -128,6 +128,6 @@ def create_hail_mary_submission(
     lower_hb, upper_hb = model_hb.predict_intervals(test_ensemble)
 
     test_data[["id"]].assign(pi_lower=lower_hb, pi_upper=upper_hb).to_csv(
-        LOCAL_DIR + f"submission_hail_mary_hb.csv", index=False
+        LOCAL_DIR + "submission_hail_mary_hb.csv", index=False
     )
-    print("Submission file saved to: \n" + LOCAL_DIR + f"submission_hail_mary_hb.csv")
+    print("Submission file saved to: \n" + LOCAL_DIR + "submission_hail_mary_hb.csv")

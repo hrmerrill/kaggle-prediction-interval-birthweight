@@ -27,7 +27,7 @@ class Validator:
         self.model_type = model_type
         self.n_folds = n_folds
         self.models = [getattr(kaggle_models, model_type)(**kwargs) for _ in range(n_folds)]
-        if not model_type in ["HistBoostEnsembler", "NeuralNetEnsembler"]:
+        if model_type not in ["HistBoostEnsembler", "NeuralNetEnsembler"]:
             self.data_processors = [DataProcessor(model_type) for _ in range(n_folds)]
 
     def fit(self, df: pd.DataFrame) -> None:
@@ -46,10 +46,10 @@ class Validator:
         for cv_fold in range(self.n_folds):
             print(f"Validation on fold {cv_fold+1} of {self.n_folds} begins.")
 
-            df_train = df.query(f"cv_fold != @cv_fold")
-            df_test = df.query(f"cv_fold == @cv_fold")
+            df_train = df.query("cv_fold != @cv_fold")
+            df_test = df.query("cv_fold == @cv_fold")
 
-            if not self.model_type in ["HistBoostEnsembler", "NeuralNetEnsembler"]:
+            if self.model_type not in ["HistBoostEnsembler", "NeuralNetEnsembler"]:
                 x_train, y_train = self.data_processors[cv_fold](df_train)
                 x_test, y_test = self.data_processors[cv_fold](df_test)
                 if self.model_type == "MissingnessNeuralNetClassifier":
