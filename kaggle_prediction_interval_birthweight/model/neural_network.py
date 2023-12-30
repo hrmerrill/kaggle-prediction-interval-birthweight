@@ -359,7 +359,7 @@ class MissingnessNeuralNetClassifier:
         batch_size: int = 1000,
         alpha: float = 0.9,
         n_epochs: int = 1000,
-        verbose: int = 1,
+        verbose: int = 0,
     ) -> None:
         """
         Parameters
@@ -467,7 +467,7 @@ class MissingnessNeuralNetClassifier:
             shuffle=True,
             callbacks=[
                 tf.keras.callbacks.EarlyStopping(
-                    patience=10, restore_best_weights=True, min_delta=0.0001
+                    patience=50, restore_best_weights=True, min_delta=0.0001
                 ),
                 tf.keras.callbacks.TerminateOnNaN(),
             ],
@@ -666,7 +666,7 @@ class MissingnessNeuralNetEIM:
             shuffle=True,
             callbacks=[
                 tf.keras.callbacks.EarlyStopping(
-                    patience=10, restore_best_weights=True, min_delta=0.0001
+                    patience=50, restore_best_weights=True, min_delta=0.0001
                 ),
                 tf.keras.callbacks.TerminateOnNaN(),
             ],

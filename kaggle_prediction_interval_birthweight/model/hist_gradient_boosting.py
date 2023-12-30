@@ -24,17 +24,17 @@ class HistBoostRegressor:
         """
         self.alpha = alpha
         param_grid = {
-            "max_leaf_nodes": [None],
-            "max_depth": [None],
-            "min_samples_leaf": [5],
             "l2_regularization": [0, 0.1],
-            "learning_rate": [1, 0.1, 0.03, 0.01],
+            "learning_rate": [1, 0.1, 0.01],
         }
         self.lower_regressor = GridSearchCV(
             estimator=HistGradientBoostingRegressor(
                 loss="quantile",
                 quantile=(1 - alpha) / 2,
                 max_iter=1000,
+                max_leaf_nodes=None,
+                max_depth=None,
+                min_samples_leaf=10,
             ),
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=(1 - alpha) / 2)),
@@ -45,13 +45,23 @@ class HistBoostRegressor:
                 loss="quantile",
                 quantile=alpha + (1 - alpha) / 2,
                 max_iter=1000,
+                max_leaf_nodes=None,
+                max_depth=None,
+                min_samples_leaf=10,
             ),
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=alpha + (1 - alpha) / 2)),
             verbose=1,
         )
         self.median_regressor = GridSearchCV(
-            estimator=HistGradientBoostingRegressor(quantile=0.5, loss="quantile", max_iter=1000),
+            estimator=HistGradientBoostingRegressor(
+                quantile=0.5,
+                loss="quantile",
+                max_iter=1000,
+                max_leaf_nodes=50,
+                max_depth=None,
+                min_samples_leaf=20,
+            ),
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=0.5)),
             verbose=1,
@@ -69,9 +79,9 @@ class HistBoostRegressor:
             Array of response values
         """
         xtr, xval, ytr, yval = train_test_split(X, y, random_state=1, test_size=0.3)
+        self.median_regressor.fit(xtr, ytr.squeeze())
         self.lower_regressor.fit(xtr, ytr.squeeze())
         self.upper_regressor.fit(xtr, ytr.squeeze())
-        self.median_regressor.fit(xtr, ytr.squeeze())
         print("Calibrating with Mapie.")
         self.calibrator = MapieQuantileRegressor(
             [
