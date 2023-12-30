@@ -368,5 +368,5 @@ def eim_loss(
     loss = k_b * widths
 
     if y_pred.shape[-1] == 3:
-        loss = loss + tf.reduce_mean(tf.math.abs(tf.squeeze(y_true) - y_pred[:, 2]))
+        loss = loss + tf.math.abs(tf.squeeze(y_true) - y_pred[:, 2])
     return loss

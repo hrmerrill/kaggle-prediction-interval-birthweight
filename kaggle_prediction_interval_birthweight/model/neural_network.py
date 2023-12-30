@@ -7,15 +7,17 @@ Paper: https://arxiv.org/pdf/1805.07405.pdf
 EM algorithm: https://arxiv.org/pdf/1209.0521.pdf and https://arxiv.org/pdf/1902.03335.pdf
 """
 
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import scipy.stats as st
 import tensorflow as tf
+from mapie.regression import MapieQuantileRegressor
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
 from kaggle_prediction_interval_birthweight.data.data_processing import SOFTPLUS_SCALE
+from kaggle_prediction_interval_birthweight.model.constants import BIN_LABELS
 from kaggle_prediction_interval_birthweight.model.utils import (
     DenseMissing,
     compute_highest_density_interval,
@@ -258,21 +260,112 @@ class MissingnessNeuralNetRegressor:
             return np_softplus(lower) * SOFTPLUS_SCALE, np_softplus(upper) * SOFTPLUS_SCALE
 
 
+class MapieHelper:
+    """Helper class for using Mapie for calibration of predicted intervals."""
+
+    def __init__(
+        self,
+        model: tf.keras.models.Model,
+        which_type: str,
+        which_pred: int,
+        bin_values: Optional[np.ndarray] = None,
+        alpha: float = 0.9,
+    ) -> None:
+        """
+        Parameters
+        ----------
+        model: tf.keras.models.Model
+            The trained tensorflow model
+        which_type: str
+            One of "classifier" or "EIM"
+        which_pred: int
+            one of 0 (lower bound), 1 (upper bound), or 2 (median)
+        bin_values: np.ndarray
+            the numeric values corresponding to each category (e.g., bin midpoint). Required if
+            self.which_type == "classifier".
+        alpha: float
+            the significance level of the predicted intervals. Relevant only for
+            self.which_type == "classifier".
+        """
+        self.model = model
+        self.which_type = which_type
+        self.which_pred = which_pred
+        self.bin_values = bin_values
+        self.alpha = alpha
+        self.__sklearn_is_fitted__ = lambda: True
+
+    def fit(self, X: tf.Tensor, y: tf.Tensor) -> None:
+        """Doesn't do anything, just required by Mapie."""
+
+    def predict(self, X: tf.Tensor) -> tf.Tensor:
+        """
+        Predict from the model.
+
+        Parameters
+        ----------
+        X: tf.Tensor
+            the input tensor
+
+        Returns
+        -------
+        tf.Tensor
+            the lower bounds, upper bounds, or medians, if self.which_pred is 0, 1, or 2,
+            respectively.
+        """
+        if self.which_type == "classifier":
+
+            def get_smallest_interval_rowwise(row, alpha=self.alpha, bin_values=self.bin_values):
+                """helper function to apply row-wise to get smallest the interval."""
+                upper_indices, widths = [], []
+                for lower_index in range(len(row)):
+                    cumulative_probs = row[lower_index:].cumsum()
+                    if cumulative_probs[-1] <= alpha:
+                        break
+                    else:
+                        upper_index = np.where(cumulative_probs >= alpha)[0].min() + lower_index - 1
+                        widths.append(bin_values[upper_index] - bin_values[lower_index])
+                        upper_indices.append(upper_index)
+                return np.array(widths).argmin(), upper_indices[np.array(widths).argmin()]
+
+            probs = self.model.predict(X)
+            lower_inds, upper_inds = [], []
+            for probs_row in tqdm(
+                probs, total=probs.shape[0], desc="Searching for smallest interval"
+            ):
+                lower_ind, upper_ind = get_smallest_interval_rowwise(probs_row)
+                lower_inds.append(lower_ind)
+                upper_inds.append(upper_ind)
+            lower, upper = self.bin_values[lower_inds], self.bin_values[upper_inds]
+            median = self.bin_values[np.abs(probs.cumsum(axis=1) - 0.5).argmin(axis=1)]
+            outputs = np.hstack(
+                [lower.reshape((-1, 1)), upper.reshape((-1, 1)), median.reshape((-1, 1))]
+            )
+
+        elif self.which_type == "EIM":
+            outputs = self.model.predict(X)
+
+        return outputs[:, self.which_pred]
+
+
 class MissingnessNeuralNetClassifier:
     """Class for neural network classifier that can handle missing values."""
 
     def __init__(
         self,
+        bin_values: np.ndarray = BIN_LABELS,
         units_list: List[int] = [200, 200, 200],
         n_components: int = 3,
         dropout_rate: float = 0.3,
         batch_size: int = 1000,
-        n_epochs: int = 100,
-        verbose: int = 0,
+        alpha: float = 0.9,
+        n_epochs: int = 1000,
+        verbose: int = 1,
     ) -> None:
         """
         Parameters
         ----------
+        bin_values: np.ndarray
+            the numeric values corresponding to each category (e.g., bin midpoint)
         units_list: int
             number of units in each hidden layer (excluding input and output layers)
         n_components: int
@@ -281,19 +374,23 @@ class MissingnessNeuralNetClassifier:
             dropout rate for regularization
         batch_size: int
             minibatch size for gradient descent
+        alpha: float
+            Desired coverage level of predicted intervals
         n_epochs: int
             number of epochs for training the model
         verbose: bool
             controls the verbosity during training (passed to tf.model.fit())
         """
+        self.bin_values = bin_values
         self.units_list = units_list
         self.n_components = n_components
         self.dropout_rate = dropout_rate
         self.batch_size = batch_size
+        self.alpha = alpha
         self.n_epochs = n_epochs
         self.verbose = verbose
 
-    def build_model(self, X: np.ndarray, n_categories: int) -> None:
+    def build_model(self, X: np.ndarray) -> None:
         """
         Build the model.
 
@@ -301,8 +398,6 @@ class MissingnessNeuralNetClassifier:
         ----------
         X: np.ndarray
             Design matrix containing features
-        n_categories: int
-            The number of categories to predict
         """
         missingness_present = np.isnan(X).any()
         inputs = tf.keras.layers.Input(shape=(X.shape[-1],))
@@ -334,7 +429,7 @@ class MissingnessNeuralNetClassifier:
         next_output = next_output + skip_output
 
         # the final layers for the predictions
-        probs = tf.keras.layers.Dense(units=n_categories, activation="softmax")(next_output)
+        probs = tf.keras.layers.Dense(units=len(self.bin_values), activation="softmax")(next_output)
         self.model = tf.keras.models.Model(inputs=inputs, outputs=probs)
         self.model.compile(
             optimizer=tf.keras.optimizers.legacy.Adam(
@@ -349,7 +444,7 @@ class MissingnessNeuralNetClassifier:
             loss="sparse_categorical_crossentropy",
         )
 
-    def fit(self, X: np.ndarray, y: np.ndarray, n_categories: int) -> None:
+    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         """
         Fit the model.
 
@@ -359,10 +454,8 @@ class MissingnessNeuralNetClassifier:
             Design matrix containing features
         y: np.ndarray
             Array of response values
-        n_categories: int
-            Number of categories represented in y
         """
-        self.build_model(X, n_categories=n_categories)
+        self.build_model(X)
         x_train, x_val, y_train, y_val = train_test_split(X, y, random_state=1, test_size=0.3)
         self.model.fit(
             x=tf.convert_to_tensor(x_train),
@@ -379,10 +472,24 @@ class MissingnessNeuralNetClassifier:
                 tf.keras.callbacks.TerminateOnNaN(),
             ],
         )
+        print("Calibrating with Mapie.")
+        self.calibrator = MapieQuantileRegressor(
+            [
+                MapieHelper(
+                    model=self.model,
+                    which_type="classifier",
+                    which_pred=i,
+                    alpha=self.alpha,
+                    bin_values=self.bin_values,
+                )
+                for i in range(3)
+            ],
+            alpha=1 - self.alpha,
+            cv="prefit",
+        )
+        self.calibrator.fit(x_val, self.bin_values[y_val.squeeze().astype(int)])
 
-    def predict_intervals(
-        self, X: np.ndarray, bin_values: np.ndarray, alpha: float = 0.9
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    def predict_intervals(self, X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
         Predict the alpha * 100% interval for birthweight.
 
@@ -390,38 +497,15 @@ class MissingnessNeuralNetClassifier:
         ----------
         X: np.ndarray
             the design matrix used by self.fit(X, y)
-        bin_values: np.ndarray
-            the numeric values corresponding to each category (e.g., bin midpoint)
-        alpha: float
-            the significance level of the predicted intervals
 
         Returns
         -------
         Tuple
             the arrays corresponding to the lower and upper bounds, respectively
         """
-
-        def get_smallest_interval_rowwise(row, alpha=alpha, bin_values=bin_values):
-            """helper function to apply row-wise to get smallest the interval."""
-            upper_indices, widths = [], []
-            for lower_index in range(len(row)):
-                cumulative_probs = row[lower_index:].cumsum()
-                if cumulative_probs[-1] <= alpha:
-                    break
-                else:
-                    upper_index = np.where(cumulative_probs >= alpha)[0].min() + lower_index - 1
-                    widths.append(bin_values[upper_index] - bin_values[lower_index])
-                    upper_indices.append(upper_index)
-            return np.array(widths).argmin(), upper_indices[np.array(widths).argmin()]
-
-        probs = self.model.predict(X)
-        lower_inds, upper_inds = [], []
-        for probs_row in tqdm(probs, total=probs.shape[0], desc="Searching for smallest interval"):
-            lower_ind, upper_ind = get_smallest_interval_rowwise(probs_row)
-            lower_inds.append(lower_ind)
-            upper_inds.append(upper_ind)
-        lower, upper = bin_values[lower_inds], bin_values[upper_inds]
-        return lower, upper
+        _, intervals = self.calibrator.predict(X)
+        lower, upper = intervals.squeeze().T
+        return lower.squeeze(), upper.squeeze()
 
 
 class MissingnessNeuralNetEIM:
@@ -587,12 +671,16 @@ class MissingnessNeuralNetEIM:
                 tf.keras.callbacks.TerminateOnNaN(),
             ],
         )
-        pred_val = self.model.predict(x_val)
-        self.expansion_factor = np.quantile(
-            (pred_val[:, 1] + pred_val[:, 0] - 2 * y_val.squeeze())
-            / (pred_val[:, 1] - pred_val[:, 0]),
-            self.alpha,
+        print("Calibrating with Mapie.")
+        self.calibrator = MapieQuantileRegressor(
+            [
+                MapieHelper(model=self.model, which_type="EIM", which_pred=i, alpha=self.alpha)
+                for i in range(3)
+            ],
+            alpha=1 - self.alpha,
+            cv="prefit",
         )
+        self.calibrator.fit(x_val, y_val.squeeze())
 
     def predict_intervals(self, X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -608,8 +696,8 @@ class MissingnessNeuralNetEIM:
         Tuple
             the arrays corresponding to the lower and upper bounds, respectively
         """
-        lower, upper = self.model.predict(X).T
-        midpoint = (lower + upper) / 2
-        lower = (lower - midpoint) * self.expansion_factor + midpoint
-        upper = (upper - midpoint) * self.expansion_factor + midpoint
-        return np_softplus(lower) * SOFTPLUS_SCALE, np_softplus(upper) * SOFTPLUS_SCALE
+        _, intervals = self.calibrator.predict(X)
+        lower, upper = intervals.squeeze().T
+        lower = np_softplus(lower) * SOFTPLUS_SCALE
+        upper = np_softplus(upper) * SOFTPLUS_SCALE
+        return lower.squeeze(), upper.squeeze()

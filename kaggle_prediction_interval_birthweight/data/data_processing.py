@@ -6,12 +6,14 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import OneHotEncoder
 
-from kaggle_prediction_interval_birthweight.model.constants import MISSING_CODE, VARIABLE_TYPE
+from kaggle_prediction_interval_birthweight.model.constants import (
+    BIN_LABELS,
+    MISSING_CODE,
+    VARIABLE_TYPE,
+)
 from kaggle_prediction_interval_birthweight.model.utils import np_softplus_inv
 
 TIMESTAMP_COL_NAME = "DOB_TT"
-Y_MIN = 230
-Y_MAX = 6840
 Y_MEAN = 3260
 Y_SD = 590
 SOFTPLUS_SCALE = 1000
@@ -25,7 +27,6 @@ class DataProcessor:
         model_type: str,
         standardization_parameters: Optional[Dict[str, np.ndarray]] = None,
         feature_categories: Optional[Dict[str, str]] = None,
-        n_bins: int = 500,
     ) -> None:
         """
         Parameters
@@ -40,9 +41,6 @@ class DataProcessor:
         feature_categories: Dict
             levels of categorical variables. None during training (they are inferred), but at
             test time these values should be passed in.
-        n_bins: int
-            if model_type == "MissingnessNeuralNetClassifier", the response variable is
-            categorized into n_bins equally spaced bins.
         """
         allowed_model_types = [
             "RidgeRegressor",
@@ -56,9 +54,6 @@ class DataProcessor:
         self.model_type = model_type
         self.standardization_parameters = standardization_parameters
         self.feature_categories = feature_categories
-        self.n_bins = n_bins
-        self.bin_edges = np.linspace(Y_MIN - 1, Y_MAX + 1, self.n_bins)
-        self.bin_values = (self.bin_edges[1:] + self.bin_edges[:-1]) / 2
         self.nondegenerate_columns = None
 
     def _enforce_feature_types(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -349,7 +344,15 @@ class DataProcessor:
             if self.model_type in ["RidgeRegressor"]:
                 y = (df["DBWT"].values.reshape((-1, 1)) - Y_MEAN) / Y_SD
             elif self.model_type in ["MissingnessNeuralNetClassifier"]:
-                y = pd.cut(df["DBWT"], bins=self.bin_edges, labels=False)
+                bin_edges = np.concatenate(
+                    [
+                        np.array([-np.inf]),
+                        (BIN_LABELS[1:] + BIN_LABELS[:-1]) / 2,
+                        np.array([np.inf]),
+                    ]
+                )
+                y = pd.cut(df["DBWT"], bins=bin_edges, retbins=False, labels=False).values
+                self.bin_values = BIN_LABELS
             else:
                 y = np_softplus_inv(df["DBWT"].values.reshape((-1, 1)) / SOFTPLUS_SCALE)
 

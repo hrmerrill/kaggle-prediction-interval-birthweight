@@ -42,19 +42,12 @@ class BaseEnsembler:
         """
         self.alpha = alpha
         self.n_folds = n_folds
-        self.histboosters = [HistBoostRegressor(alpha) for _ in range(n_folds)]
-        self.ridge_regressors = [RidgeRegressor() for _ in range(n_folds)]
-        self.nn_regressors = [
-            MissingnessNeuralNetRegressor(bayesian=False, fit_tail=True) for _ in range(n_folds)
-        ]
-        self.nn_classifiers = [MissingnessNeuralNetClassifier() for _ in range(n_folds)]
-        self.nn_eims = [MissingnessNeuralNetEIM() for _ in range(n_folds)]
 
         ridge_predictions = ["lower_ridge", "mean_ridge", "upper_ridge"]
         boost_predictions = ["lower_boost", "upper_boost"]
         nn_predictions = ["center_nn", "scale_nn", "skew_nn", "tail_nn", "lower_nn", "upper_nn"]
         nnc_predictions = ["lower_nnc", "mode_nnc", "upper_nnc"]
-        eim_predictions = ["lower_eim", "upper_eim"]
+        eim_predictions = ["lower_eim", "median_eim", "upper_eim"]
         self.upstream_predictions = (
             ridge_predictions
             + boost_predictions
@@ -90,6 +83,15 @@ class BaseEnsembler:
         _ = self.nn_data_processor(df)
         _ = self.nnc_data_processor(df)
         _ = self.eim_data_processor(df)
+
+        self.histboosters = [HistBoostRegressor(self.alpha) for _ in range(self.n_folds)]
+        self.ridge_regressors = [RidgeRegressor() for _ in range(self.n_folds)]
+        self.nn_regressors = [
+            MissingnessNeuralNetRegressor(bayesian=False, fit_tail=True)
+            for _ in range(self.n_folds)
+        ]
+        self.nn_classifiers = [MissingnessNeuralNetClassifier() for _ in range(self.n_folds)]
+        self.nn_eims = [MissingnessNeuralNetEIM() for _ in range(self.n_folds)]
 
         # create some information for holding new data in the data frame
         df["fold"] = np.random.choice(self.n_folds, df.shape[0])
@@ -148,23 +150,21 @@ class BaseEnsembler:
             df.loc[df["fold"] == k, "upper_nn"] = nn_upper.squeeze() / SOFTPLUS_SCALE
 
             print("Training the neural network classifier.")
-            self.nn_classifiers[k].fit(
-                xnc_train, ync_train, n_categories=self.nnc_data_processor.n_bins
-            )
+            self.nn_classifiers[k].fit(xnc_train, ync_train)
             nnc_modes = self.nnc_data_processor.bin_values[
                 self.nn_classifiers[k].model.predict(xnc_test).argmax(axis=1)
             ]
-            nnc_lower, nnc_upper = self.nn_classifiers[k].predict_intervals(
-                xnc_test, bin_values=self.nnc_data_processor.bin_values
-            )
+            nnc_lower, nnc_upper = self.nn_classifiers[k].predict_intervals(xnc_test)
             df.loc[df["fold"] == k, "lower_nnc"] = nnc_lower.squeeze() / SOFTPLUS_SCALE
             df.loc[df["fold"] == k, "mode_nnc"] = nnc_modes.squeeze() / SOFTPLUS_SCALE
             df.loc[df["fold"] == k, "upper_nnc"] = nnc_upper.squeeze() / SOFTPLUS_SCALE
 
             print("Training the neural network EIM.")
             self.nn_eims[k].fit(xeim_train, yeim_train)
+            eim_median = self.nn_eims[k].model.predict(xeim_test)[:, 2]
             eim_lower, eim_upper = self.nn_eims[k].predict_intervals(xeim_test)
             df.loc[df["fold"] == k, "lower_eim"] = eim_lower.squeeze() / SOFTPLUS_SCALE
+            df.loc[df["fold"] == k, "median_eim"] = eim_median.squeeze()
             df.loc[df["fold"] == k, "upper_eim"] = eim_upper.squeeze() / SOFTPLUS_SCALE
 
         return df
@@ -185,11 +185,11 @@ class HistBoostEnsembler(BaseEnsembler):
         super(HistBoostEnsembler, self).__init__(**kwargs)
 
         param_grid = {
-            "max_leaf_nodes": [20, None],
+            "max_leaf_nodes": [20, 50, None],
             "max_depth": [5, None],
             "min_samples_leaf": [10, 50],
             "l2_regularization": [0, 0.1],
-            "learning_rate": [1, 0.1, 0.03],
+            "learning_rate": [1, 0.1, 0.03, 0.01],
         }
         self.lower_regressor = GridSearchCV(
             estimator=HistGradientBoostingRegressor(
@@ -198,7 +198,6 @@ class HistBoostEnsembler(BaseEnsembler):
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=(1 - self.alpha) / 2)),
             verbose=1,
-            cv=3,
         )
         self.upper_regressor = GridSearchCV(
             estimator=HistGradientBoostingRegressor(
@@ -211,14 +210,12 @@ class HistBoostEnsembler(BaseEnsembler):
                 lambda o, p: d2_pinball_score(o, p, alpha=self.alpha + (1 - self.alpha) / 2)
             ),
             verbose=1,
-            cv=3,
         )
         self.median_regressor = GridSearchCV(
             estimator=HistGradientBoostingRegressor(quantile=0.5, loss="quantile", max_iter=1000),
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=0.5)),
             verbose=1,
-            cv=3,
         )
 
     def fit(self, df: pd.DataFrame) -> None:
@@ -246,9 +243,13 @@ class HistBoostEnsembler(BaseEnsembler):
         self.upper_regressor.fit(xtr, ytr.squeeze())
         self.median_regressor.fit(xtr, ytr.squeeze())
 
-        print("Training the calibrator.")
+        print("Calibrating with Mapie.")
         self.calibrator = MapieQuantileRegressor(
-            [self.lower_regressor, self.upper_regressor, self.median_regressor],
+            [
+                self.lower_regressor.best_estimator_,
+                self.upper_regressor.best_estimator_,
+                self.median_regressor.best_estimator_,
+            ],
             alpha=1 - self.alpha,
             cv="prefit",
         )
@@ -288,9 +289,8 @@ class HistBoostEnsembler(BaseEnsembler):
             nncm = self.nnc_data_processor.bin_values[
                 self.nn_classifiers[k].model.predict(xnc).argmax(axis=1)
             ]
-            nncl, nncu = self.nn_classifiers[k].predict_intervals(
-                xnc, self.nnc_data_processor.bin_values
-            )
+            nncl, nncu = self.nn_classifiers[k].predict_intervals(xnc)
+            em = self.nn_eims[k].model.predict(xeim)[:, 2]
             el, eu = self.nn_eims[k].predict_intervals(xeim)
             x = np.hstack(
                 [
@@ -309,6 +309,7 @@ class HistBoostEnsembler(BaseEnsembler):
                     nncm.reshape((-1, 1)) / SOFTPLUS_SCALE,
                     nncu.reshape((-1, 1)) / SOFTPLUS_SCALE,
                     el.reshape((-1, 1)) / SOFTPLUS_SCALE,
+                    em.reshape((-1, 1)),
                     eu.reshape((-1, 1)) / SOFTPLUS_SCALE,
                 ]
             )
@@ -366,22 +367,22 @@ class NeuralNetEnsembler(BaseEnsembler):
         self, df: pd.DataFrame, alpha: float = 0.9, n_samples: int = 1000
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Predict the alpha * 100% interval for birthweight.
+                Predict the alpha * 100% interval for birthweight.
+        nn_classifiers
+                Parameters
+                ----------
+                df: pd.DataFrame
+                    The input data
+                alpha: float
+                    significance level for prediction intervals. Can be different from the value
+                    passed at initialization.
+                n_samples: int
+                    This many samples are drawn from the posterior distribution
 
-        Parameters
-        ----------
-        df: pd.DataFrame
-            The input data
-        alpha: float
-            significance level for prediction intervals. Can be different from the value
-            passed at initialization.
-        n_samples: int
-            This many samples are drawn from the posterior distribution
-
-        Returns
-        -------
-        Tuple
-            the arrays corresponding to the lower and upper bounds, respectively
+                Returns
+                -------
+                Tuple
+                    the arrays corresponding to the lower and upper bounds, respectively
         """
         df = df.copy()
         if "DBWT" in df.columns:
@@ -403,9 +404,8 @@ class NeuralNetEnsembler(BaseEnsembler):
             nncm = self.nnc_data_processor.bin_values[
                 self.nn_classifiers[k].model.predict(xnc).argmax(axis=1)
             ]
-            nncl, nncu = self.nn_classifiers[k].predict_intervals(
-                xnc, self.nnc_data_processor.bin_values
-            )
+            nncl, nncu = self.nn_classifiers[k].predict_intervals(xnc)
+            em = self.nn_eims[k].model.predict(xeim)[:, 2]
             el, eu = self.nn_eims[k].predict_intervals(xeim)
             x = np.hstack(
                 [
@@ -424,6 +424,7 @@ class NeuralNetEnsembler(BaseEnsembler):
                     nncm.reshape((-1, 1)) / SOFTPLUS_SCALE,
                     nncu.reshape((-1, 1)) / SOFTPLUS_SCALE,
                     el.reshape((-1, 1)) / SOFTPLUS_SCALE,
+                    em.reshape((-1, 1)),
                     eu.reshape((-1, 1)) / SOFTPLUS_SCALE,
                 ]
             )
