@@ -6,17 +6,17 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import OneHotEncoder
 
-from kaggle_prediction_interval_birthweight.model.constants import (
+from kaggle_prediction_interval_birthweight.data.constants import (
     BIN_LABELS,
     MISSING_CODE,
+    SOFTPLUS_SCALE,
     VARIABLE_TYPE,
+    Y_MEAN,
+    Y_SD,
 )
-from kaggle_prediction_interval_birthweight.model.utils import np_softplus_inv
+from kaggle_prediction_interval_birthweight.utils.utils import np_softplus_inv
 
 TIMESTAMP_COL_NAME = "DOB_TT"
-Y_MEAN = 3260
-Y_SD = 590
-SOFTPLUS_SCALE = 1000
 
 
 class DataProcessor:

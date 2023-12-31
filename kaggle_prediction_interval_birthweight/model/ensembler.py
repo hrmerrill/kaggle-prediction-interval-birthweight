@@ -8,10 +8,8 @@ from sklearn.metrics import d2_pinball_score, make_scorer
 from sklearn.model_selection import GridSearchCV, train_test_split
 from tqdm import tqdm
 
-from kaggle_prediction_interval_birthweight.data.data_processing import (
-    SOFTPLUS_SCALE,
-    DataProcessor,
-)
+from kaggle_prediction_interval_birthweight.data.constants import SOFTPLUS_SCALE
+from kaggle_prediction_interval_birthweight.data.data_processing import DataProcessor
 from kaggle_prediction_interval_birthweight.model.hist_gradient_boosting import HistBoostRegressor
 from kaggle_prediction_interval_birthweight.model.linear_regression import RidgeRegressor
 from kaggle_prediction_interval_birthweight.model.neural_network import (
@@ -19,7 +17,7 @@ from kaggle_prediction_interval_birthweight.model.neural_network import (
     MissingnessNeuralNetEIM,
     MissingnessNeuralNetRegressor,
 )
-from kaggle_prediction_interval_birthweight.model.utils import (
+from kaggle_prediction_interval_birthweight.utils.utils import (
     compute_highest_density_interval,
     np_softplus,
     np_softplus_inv,
@@ -185,17 +183,17 @@ class HistBoostEnsembler(BaseEnsembler):
         super(HistBoostEnsembler, self).__init__(**kwargs)
 
         param_grid = {
-            "l2_regularization": [0, 0.1],
-            "learning_rate": [1, 0.1, 0.01],
+            "l2_regularization": [0, 0.14],
+            "learning_rate": [0.3, 0.1],
         }
         self.lower_regressor = GridSearchCV(
             estimator=HistGradientBoostingRegressor(
                 quantile=(1 - self.alpha) / 2,
                 loss="quantile",
                 max_iter=1000,
-                max_leaf_nodes=None,
-                max_depth=None,
-                min_samples_leaf=10,
+                max_leaf_nodes=8,
+                max_depth=3,
+                min_samples_leaf=70,
             ),
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=(1 - self.alpha) / 2)),
@@ -206,9 +204,9 @@ class HistBoostEnsembler(BaseEnsembler):
                 quantile=self.alpha + (1 - self.alpha) / 2,
                 loss="quantile",
                 max_iter=1000,
-                max_leaf_nodes=None,
-                max_depth=None,
-                min_samples_leaf=10,
+                max_leaf_nodes=8,
+                max_depth=3,
+                min_samples_leaf=70,
             ),
             param_grid=param_grid,
             scoring=make_scorer(
@@ -221,9 +219,9 @@ class HistBoostEnsembler(BaseEnsembler):
                 quantile=0.5,
                 loss="quantile",
                 max_iter=1000,
-                max_leaf_nodes=50,
-                max_depth=None,
-                min_samples_leaf=20,
+                max_leaf_nodes=8,
+                max_depth=3,
+                min_samples_leaf=70,
             ),
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=0.5)),

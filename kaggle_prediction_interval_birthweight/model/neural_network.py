@@ -16,9 +16,8 @@ from mapie.regression import MapieQuantileRegressor
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
-from kaggle_prediction_interval_birthweight.data.data_processing import SOFTPLUS_SCALE
-from kaggle_prediction_interval_birthweight.model.constants import BIN_LABELS
-from kaggle_prediction_interval_birthweight.model.utils import (
+from kaggle_prediction_interval_birthweight.data.constants import BIN_LABELS, SOFTPLUS_SCALE
+from kaggle_prediction_interval_birthweight.utils.utils import (
     DenseMissing,
     compute_highest_density_interval,
     eim_loss,

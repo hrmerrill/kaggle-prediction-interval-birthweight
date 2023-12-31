@@ -1,5 +1,9 @@
 import numpy as np
 
+Y_MEAN = 3260
+Y_SD = 590
+SOFTPLUS_SCALE = 1000
+
 VARIABLE_TYPE = {
     "ATTEND": "categorical",
     "BFACIL": "categorical",

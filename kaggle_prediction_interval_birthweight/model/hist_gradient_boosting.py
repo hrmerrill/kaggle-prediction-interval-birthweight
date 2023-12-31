@@ -6,13 +6,13 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.metrics import d2_pinball_score, make_scorer
 from sklearn.model_selection import GridSearchCV, train_test_split
 
-from kaggle_prediction_interval_birthweight.data.data_processing import SOFTPLUS_SCALE
-from kaggle_prediction_interval_birthweight.model.utils import np_softplus
+from kaggle_prediction_interval_birthweight.data.constants import SOFTPLUS_SCALE
+from kaggle_prediction_interval_birthweight.utils.utils import np_softplus
 
 
 class HistBoostRegressor:
     """
-    Extend the RidgeCV class to predict prediction intervals on the original scale.
+    Wrap around three histboost regressors.
     """
 
     def __init__(self, alpha: float = 0.9) -> None:
@@ -24,17 +24,17 @@ class HistBoostRegressor:
         """
         self.alpha = alpha
         param_grid = {
-            "l2_regularization": [0, 0.1],
-            "learning_rate": [1, 0.1, 0.01],
+            "l2_regularization": [0, 0.14],
+            "learning_rate": [0.3, 0.1],
         }
         self.lower_regressor = GridSearchCV(
             estimator=HistGradientBoostingRegressor(
                 loss="quantile",
                 quantile=(1 - alpha) / 2,
                 max_iter=1000,
-                max_leaf_nodes=None,
-                max_depth=None,
-                min_samples_leaf=10,
+                max_leaf_nodes=8,
+                max_depth=3,
+                min_samples_leaf=70,
             ),
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=(1 - alpha) / 2)),
@@ -45,9 +45,9 @@ class HistBoostRegressor:
                 loss="quantile",
                 quantile=alpha + (1 - alpha) / 2,
                 max_iter=1000,
-                max_leaf_nodes=None,
-                max_depth=None,
-                min_samples_leaf=10,
+                max_leaf_nodes=8,
+                max_depth=3,
+                min_samples_leaf=70,
             ),
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=alpha + (1 - alpha) / 2)),
@@ -58,9 +58,9 @@ class HistBoostRegressor:
                 quantile=0.5,
                 loss="quantile",
                 max_iter=1000,
-                max_leaf_nodes=50,
-                max_depth=None,
-                min_samples_leaf=20,
+                max_leaf_nodes=8,
+                max_depth=3,
+                min_samples_leaf=70,
             ),
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=0.5)),
