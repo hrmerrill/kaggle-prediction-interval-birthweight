@@ -29,9 +29,6 @@ class Validator:
         self.kwargs = kwargs
         if model_type not in ["HistBoostEnsembler", "NeuralNetEnsembler"]:
             self.data_processors = [DataProcessor(model_type) for _ in range(n_folds)]
-        self.models = [
-            getattr(kaggle_models, self.model_type)(**self.kwargs) for _ in range(self.n_folds)
-        ]
 
     def fit(self, df: pd.DataFrame) -> None:
         """
@@ -44,6 +41,21 @@ class Validator:
         """
         df = df.copy()
         df["cv_fold"] = np.random.choice(self.n_folds, df.shape[0])
+
+        if self.model_type == "HistBoostRegressor":
+            throw_away_data_processor = DataProcessor("HistBoostRegressor")
+            _ = throw_away_data_processor(df)
+            self.models = [
+                kaggle_models.HistBoostRegressor(
+                    categorical_feature_mask=throw_away_data_processor.categorical_features,
+                    **self.kwargs,
+                )
+                for _ in range(self.n_folds)
+            ]
+        else:
+            self.models = [
+                getattr(kaggle_models, self.model_type)(**self.kwargs) for _ in range(self.n_folds)
+            ]
 
         lower_list, upper_list, observations_list = [], [], []
         for cv_fold in range(self.n_folds):

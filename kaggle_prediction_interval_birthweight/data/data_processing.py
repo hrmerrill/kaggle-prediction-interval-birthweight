@@ -113,10 +113,6 @@ class DataProcessor:
         pd.DataFrame
             The same data frame with missing data processed according to self.model_type.
         """
-        # for tree-based models, just use the missingness codes.
-        if self.model_type == "HistBoostRegressor":
-            return df
-
         for feature in MISSING_CODE.keys():
             # handle lists of multiple missing codes, where relevant
             missing_code = (
@@ -137,11 +133,13 @@ class DataProcessor:
                 else:
                     replacement = df.loc[~df[feature].isin(missing_code), feature].median()
 
-            # for the neural network, use real NAs with the expected relu layer.
+            # for the neural network, use real NAs with the expected relu layer. Boosting also has
+            # native support for NaNs.
             elif self.model_type in [
                 "MissingnessNeuralNetRegressor",
                 "MissingnessNeuralNetClassifier",
                 "MissingnessNeuralNetEIM",
+                "HistBoostRegressor",
             ]:
                 replacement = None
             df.loc[df[feature].isin(missing_code), feature] = replacement
@@ -173,10 +171,10 @@ class DataProcessor:
         df["ILOP_R_3"] = df["ILOP_R"] ** 3
         keepers = keepers + ["ILOP_R_2", "ILOP_R_3"]
 
-        # NaNs and medians are taken care of, but for the tree-based model, use the missing code
-        if self.model_type == "HistBoostRegressor":
-            df.loc[df["ILOP_R"].isin(ilopr_missing_codes), "ILOP_R_2"] = ilopr_missing_codes[0]
-            df.loc[df["ILOP_R"].isin(ilopr_missing_codes), "ILOP_R_3"] = ilopr_missing_codes[0]
+        # NaNs and medians are taken care of, but for the tree-based model, use NaN
+        if self.model_type in ["HistBoostRegressor"]:
+            df.loc[df["ILOP_R"].isin(ilopr_missing_codes), "ILOP_R_2"] = None
+            df.loc[df["ILOP_R"].isin(ilopr_missing_codes), "ILOP_R_3"] = None
 
         numeric_features = list(
             set(keepers)
@@ -283,38 +281,54 @@ class DataProcessor:
         Returns
         -------
         np.ndarray
-            The array of one-hot encoded categorical features.
+            The array of one-hot or integer encoded categorical features.
         """
         if self.feature_categories is None:
             self.feature_categories = {}
             for feature in self.categorical_features:
                 self.feature_categories[feature] = np.sort(df[feature].dropna().unique())
 
-        x_one_hot_list = []
-        for feature in self.categorical_features:
-            # the OneHotEncoder raises warnings when encoding NaNs as zeros. It's noisy.
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
+        if self.model_type in ["HistBoostRegressor"]:
+            x_integers_list = []
+            for feature in self.categorical_features:
+                integer_mapping = {
+                    label: i for i, label in enumerate(self.feature_categories[feature])
+                }
+                x_integer_col = df[feature].map(integer_mapping).values
 
-                x_one_hot_col = OneHotEncoder(
-                    categories=[self.feature_categories[feature]],
-                    sparse_output=False,
-                    drop=None if self.model_type == "RidgeRegressor" else "first",
-                    handle_unknown="ignore",
-                ).fit_transform(df[feature].values.reshape((-1, 1)))
+                # NaNs are encoded as -1
+                x_integer_col = np.where(df[feature].isna(), -1, x_integer_col)
+                x_integers_list.append(x_integer_col.reshape((-1, 1)))
 
-            # put NAs back for the neural network
-            if self.model_type in [
-                "MissingnessNeuralNetRegressor",
-                "MissingnessNeuralNetClassifier",
-                "MissingnessNeuralNetEIM",
-            ]:
-                x_one_hot_col = x_one_hot_col * np.where(df[feature].isna(), np.nan, 1.0).reshape(
-                    (-1, 1)
-                )
-            x_one_hot_list.append(x_one_hot_col)
-        x_one_hot = np.hstack(x_one_hot_list)
-        return x_one_hot
+            x_integers = np.hstack(x_integers_list)
+            return x_integers
+
+        else:
+            x_one_hot_list = []
+            for feature in self.categorical_features:
+                # the OneHotEncoder raises warnings when encoding NaNs as zeros. It's noisy.
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+
+                    x_one_hot_col = OneHotEncoder(
+                        categories=[self.feature_categories[feature]],
+                        sparse_output=False,
+                        drop=None if self.model_type == "RidgeRegressor" else "first",
+                        handle_unknown="ignore",
+                    ).fit_transform(df[feature].values.reshape((-1, 1)))
+
+                # put NAs back for the neural network
+                if self.model_type in [
+                    "MissingnessNeuralNetRegressor",
+                    "MissingnessNeuralNetClassifier",
+                    "MissingnessNeuralNetEIM",
+                ]:
+                    x_one_hot_col = x_one_hot_col * np.where(
+                        df[feature].isna(), np.nan, 1.0
+                    ).reshape((-1, 1))
+                x_one_hot_list.append(x_one_hot_col)
+            x_one_hot = np.hstack(x_one_hot_list)
+            return x_one_hot
 
     def __call__(self, df: pd.DataFrame) -> Union[Tuple[np.ndarray, np.ndarray], np.ndarray]:
         """
@@ -335,10 +349,15 @@ class DataProcessor:
         df = self._subset_and_binarize(df)
         X_numeric = self._prepare_numerical_features(df)
         X_categorical = self._prepare_categorical_features(df)
+        self.categorical_features = np.concatenate(
+            [np.zeros(X_numeric.shape[1]), np.ones(X_categorical.shape[1])]
+        ).astype(bool)
         X = np.hstack([X_numeric, X_categorical])
-        if self.nondegenerate_columns is None:
-            self.nondegenerate_columns = (X.max(axis=0) - X.min(axis=0)) != 0
-        X = X[:, self.nondegenerate_columns]
+
+        if self.model_type not in ["HistBoostRegressor"]:
+            if self.nondegenerate_columns is None:
+                self.nondegenerate_columns = (X.max(axis=0) - X.min(axis=0)) != 0
+            X = X[:, self.nondegenerate_columns]
 
         if "DBWT" in df.columns:
             if self.model_type in ["RidgeRegressor"]:
@@ -353,6 +372,8 @@ class DataProcessor:
                 )
                 y = pd.cut(df["DBWT"], bins=bin_edges, retbins=False, labels=False).values
                 self.bin_values = BIN_LABELS
+            elif self.model_type in ["HistBoostRegressor"]:
+                y = df["DBWT"].values
             else:
                 y = np_softplus_inv(df["DBWT"].values.reshape((-1, 1)) / SOFTPLUS_SCALE)
 

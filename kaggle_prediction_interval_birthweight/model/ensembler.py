@@ -82,7 +82,13 @@ class BaseEnsembler:
         _ = self.nnc_data_processor(df)
         _ = self.eim_data_processor(df)
 
-        self.histboosters = [HistBoostRegressor(self.alpha) for _ in range(self.n_folds)]
+        self.histboosters = [
+            HistBoostRegressor(
+                alpha=self.alpha,
+                categorical_feature_mask=self.boost_data_processor.categorical_features,
+            )
+            for _ in range(self.n_folds)
+        ]
         self.ridge_regressors = [RidgeRegressor() for _ in range(self.n_folds)]
         self.nn_regressors = [
             MissingnessNeuralNetRegressor(bayesian=False, fit_tail=True)
@@ -182,18 +188,35 @@ class HistBoostEnsembler(BaseEnsembler):
         """
         super(HistBoostEnsembler, self).__init__(**kwargs)
 
+    def fit(self, df: pd.DataFrame) -> None:
+        """
+        Fit the histboost ensembler.
+
+        Parameters
+        ----------
+        df: pd.DataFrame
+            The input data
+        """
+        df = self.prepare_data(df)
+        categorical_feature_mask = np.concatenate(
+            [
+                self.boost_data_processor.categorical_features,
+                np.ndarray([False] * len(self.upstream_predictions)),
+            ]
+        )
         param_grid = {
-            "l2_regularization": [0, 0.14],
-            "learning_rate": [0.3, 0.1],
+            "l2_regularization": [0, 0.01],
+            "learning_rate": [0.3, 0.15],
         }
         self.lower_regressor = GridSearchCV(
             estimator=HistGradientBoostingRegressor(
                 quantile=(1 - self.alpha) / 2,
                 loss="quantile",
                 max_iter=1000,
-                max_leaf_nodes=8,
+                categorical_features=categorical_feature_mask,
+                max_leaf_nodes=26,
                 max_depth=3,
-                min_samples_leaf=70,
+                min_samples_leaf=83,
             ),
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=(1 - self.alpha) / 2)),
@@ -204,9 +227,10 @@ class HistBoostEnsembler(BaseEnsembler):
                 quantile=self.alpha + (1 - self.alpha) / 2,
                 loss="quantile",
                 max_iter=1000,
-                max_leaf_nodes=8,
+                categorical_features=categorical_feature_mask,
+                max_leaf_nodes=26,
                 max_depth=3,
-                min_samples_leaf=70,
+                min_samples_leaf=83,
             ),
             param_grid=param_grid,
             scoring=make_scorer(
@@ -219,25 +243,15 @@ class HistBoostEnsembler(BaseEnsembler):
                 quantile=0.5,
                 loss="quantile",
                 max_iter=1000,
-                max_leaf_nodes=8,
+                categorical_features=categorical_feature_mask,
+                max_leaf_nodes=26,
                 max_depth=3,
-                min_samples_leaf=70,
+                min_samples_leaf=83,
             ),
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=0.5)),
             verbose=1,
         )
-
-    def fit(self, df: pd.DataFrame) -> None:
-        """
-        Fit the histboost ensembler.
-
-        Parameters
-        ----------
-        df: pd.DataFrame
-            The input data
-        """
-        df = self.prepare_data(df)
 
         print("Training the ensemble model.")
         x_ens = np.hstack(

@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 from mapie.regression import MapieQuantileRegressor
@@ -6,35 +6,38 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.metrics import d2_pinball_score, make_scorer
 from sklearn.model_selection import GridSearchCV, train_test_split
 
-from kaggle_prediction_interval_birthweight.data.constants import SOFTPLUS_SCALE
-from kaggle_prediction_interval_birthweight.utils.utils import np_softplus
-
 
 class HistBoostRegressor:
     """
     Wrap around three histboost regressors.
     """
 
-    def __init__(self, alpha: float = 0.9) -> None:
+    def __init__(
+        self, alpha: float = 0.9, categorical_feature_mask: Optional[np.ndarray] = None
+    ) -> None:
         """
         Parameters
         ----------
         alpha: float
             significance level for prediction intervals
+        categorical_feature_mask: np.ndarray
+            optional boolean array indicating categorical features
         """
         self.alpha = alpha
+        self.categorical_feature_mask = categorical_feature_mask
         param_grid = {
-            "l2_regularization": [0, 0.14],
-            "learning_rate": [0.3, 0.1],
+            "l2_regularization": [0, 0.01],
+            "learning_rate": [0.3, 0.15],
         }
         self.lower_regressor = GridSearchCV(
             estimator=HistGradientBoostingRegressor(
                 loss="quantile",
                 quantile=(1 - alpha) / 2,
                 max_iter=1000,
-                max_leaf_nodes=8,
+                categorical_features=self.categorical_feature_mask,
+                max_leaf_nodes=26,
                 max_depth=3,
-                min_samples_leaf=70,
+                min_samples_leaf=83,
             ),
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=(1 - alpha) / 2)),
@@ -45,9 +48,10 @@ class HistBoostRegressor:
                 loss="quantile",
                 quantile=alpha + (1 - alpha) / 2,
                 max_iter=1000,
-                max_leaf_nodes=8,
+                categorical_features=self.categorical_feature_mask,
+                max_leaf_nodes=26,
                 max_depth=3,
-                min_samples_leaf=70,
+                min_samples_leaf=83,
             ),
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=alpha + (1 - alpha) / 2)),
@@ -58,9 +62,10 @@ class HistBoostRegressor:
                 quantile=0.5,
                 loss="quantile",
                 max_iter=1000,
-                max_leaf_nodes=8,
+                categorical_features=self.categorical_feature_mask,
+                max_leaf_nodes=26,
                 max_depth=3,
-                min_samples_leaf=70,
+                min_samples_leaf=83,
             ),
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=0.5)),
@@ -110,6 +115,4 @@ class HistBoostRegressor:
         """
         _, intervals = self.calibrator.predict(X)
         lower, upper = intervals.squeeze().T
-        lower = np_softplus(lower) * SOFTPLUS_SCALE
-        upper = np_softplus(upper) * SOFTPLUS_SCALE
         return lower.squeeze(), upper.squeeze()

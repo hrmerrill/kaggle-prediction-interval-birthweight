@@ -9,7 +9,7 @@ from kaggle_prediction_interval_birthweight.model.neural_network import (
     SOFTPLUS_SCALE,
     MissingnessNeuralNetRegressor,
 )
-from kaggle_prediction_interval_birthweight.model.utils import np_softplus_inv
+from kaggle_prediction_interval_birthweight.utils.utils import np_softplus_inv
 from kaggle_prediction_interval_birthweight.workflow.validation import Validator
 
 LOCAL_DIR = "~/dev/data/kaggle-prediction-interval-birthweight/"

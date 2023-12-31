@@ -1,4 +1,4 @@
-from typing import List, Union
+from typing import List, Optional, Union
 
 import numpy as np
 from mapie.regression import MapieQuantileRegressor
@@ -8,8 +8,6 @@ from skopt import gp_minimize
 from skopt.space import Integer, Real
 from skopt.utils import use_named_args
 
-from kaggle_prediction_interval_birthweight.data.data_processing import SOFTPLUS_SCALE
-from kaggle_prediction_interval_birthweight.utils.utils import np_softplus
 from kaggle_prediction_interval_birthweight.workflow.metric import score
 
 BASE_PARAMETER_SPACE = [
@@ -22,30 +20,18 @@ BASE_PARAMETER_SPACE = [
 
 SAVED_PRIOR_RUNS = {
     "y0": [
-        1653.28715,
-        1683.15850331,
-        1672.91563387,
-        1687.35993538,
-        1665.84357978,
-        1692.47181337,
-        1641.53385425,
-        1677.72027894,
-        1767.31711474,
-        1653.6255668,
-        1678.08465425,
-        1768.72853743,
-        1670.67686558,
-        1771.41064552,
-        1679.23823283,
-        1672.98217349,
-        1741.11285539,
-        1779.85086934,
-        1663.65901165,
-        1671.56059291,
-        1665.06594957,
+        1681.11592994,
+        1677.99559318,
+        1699.64182955,
+        1665.34872695,
+        1674.25537926,
+        1723.968289,
+        1664.06507615,
+        1771.68227481,
+        1715.00671317,
+        1682.98376227,
     ],
     "x0": [
-        [0.30721, 0.14061, 3, 8, 70],
         [0.9807412289900471, 0.46003068044903095, 2, 50, 31],
         [0.015478974396671025, 0.0008700690210600545, 7, 47, 86],
         [0.008706037847015437, 0.004195085318955972, 5, 15, 58],
@@ -56,16 +42,6 @@ SAVED_PRIOR_RUNS = {
         [0.0026690727196422457, 0.08252249755325355, 5, 7, 66],
         [0.09591956282799739, 0.0003107967535980341, 5, 15, 17],
         [0.02556910810331702, 3.0259468970108244e-05, 9, 10, 57],
-        [1.0, 9.373116718663044e-05, 8, 40, 73],
-        [0.19229648591368678, 0.0025734370536926016, 5, 8, 14],
-        [0.6319077346026674, 1.0, 1, 9, 100],
-        [0.6281223626435, 0.5825097940753016, 3, 34, 80],
-        [0.6540089853140347, 0.018693766714316707, 6, 19, 16],
-        [0.01033192611931315, 1.6868405139322896e-05, 3, 5, 18],
-        [1.0, 2.2192365845278226e-05, 3, 12, 71],
-        [0.3121546947692833, 0.05957328587483314, 9, 37, 77],
-        [0.21966002067321405, 2.0319969909620314e-05, 9, 50, 65],
-        [0.12277796061245785, 1.5166349577164813e-05, 10, 44, 26],
     ],
 }
 
@@ -82,6 +58,7 @@ class HistBoostTuner:
         self,
         alpha: float = 0.9,
         parameter_space: List[Union[Real, Integer]] = BASE_PARAMETER_SPACE,
+        categorical_feature_mask: Optional[np.ndarray] = None,
         verbose: bool = False,
     ) -> None:
         """
@@ -91,11 +68,14 @@ class HistBoostTuner:
             significance level for prediction intervals
         parameter_space: List
             the parameter space to search
+        categorical_feature_mask: np.ndarray
+            optional boolean array indicating categorical features
         verbose: bool
             verbosity of the optimizer
         """
         self.alpha = alpha
         self.parameter_space = parameter_space
+        self.categorical_feature_mask = categorical_feature_mask
         self.verbose = verbose
 
     def tune(self, X: np.ndarray, y: np.ndarray) -> None:
@@ -123,18 +103,21 @@ class HistBoostTuner:
                 loss="quantile",
                 quantile=(1 - self.alpha) / 2,
                 max_iter=1000,
+                categorical_features=self.categorical_feature_mask,
                 **params,
             )
             upper_regressor = HistGradientBoostingRegressor(
                 loss="quantile",
                 quantile=self.alpha + (1 - self.alpha) / 2,
                 max_iter=1000,
+                categorical_features=self.categorical_feature_mask,
                 **params,
             )
             median_regressor = HistGradientBoostingRegressor(
                 loss="quantile",
                 quantile=0.5,
                 max_iter=1000,
+                categorical_features=self.categorical_feature_mask,
                 **params,
             )
             median_regressor.fit(xtr, ytr.squeeze())
@@ -150,9 +133,7 @@ class HistBoostTuner:
 
             _, intervals = calibrator.predict(xtest)
             lower, upper = intervals.squeeze().T
-            lower = np_softplus(lower) * SOFTPLUS_SCALE
-            upper = np_softplus(upper) * SOFTPLUS_SCALE
-            nois, _ = score(np_softplus(ytest.squeeze()) * SOFTPLUS_SCALE, lower, upper, self.alpha)
+            nois, _ = score(ytest.squeeze(), lower, upper, self.alpha)
             return nois
 
         self.res_gp = gp_minimize(
