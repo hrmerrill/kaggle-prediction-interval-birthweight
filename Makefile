@@ -10,3 +10,8 @@ clean:
 	isort kaggle_prediction_interval_birthweight/*
 	black -l 100 kaggle_prediction_interval_birthweight/*
 	flake8 --max-line-length 100
+
+build:
+	poetry update
+	poetry install
+	poetry build

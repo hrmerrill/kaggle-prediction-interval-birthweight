@@ -172,6 +172,16 @@ class DataProcessor:
         df["ILOP_R_3"] = df["ILOP_R"] ** 3
         keepers = keepers + ["ILOP_R_2", "ILOP_R_3"]
 
+        # make gestation period explicit
+        gestation_guess = 9 if self.model_type == "RidgeRegressor" else np.nan
+        df["gestation_time"] = np.where(
+            df["DLMP_MM"] != MISSING_CODE["DLMP_MM"], df["DOB_MM"] - df["DLMP_MM"], gestation_guess
+        )
+        df["gestation_time"] = np.where(
+            df["gestation_time"] < 0, df["gestation_time"] + 12, df["gestation_time"]
+        )
+        keepers = keepers + ["gestation_time"]
+
         numeric_features = list(
             set(keepers)
             - set(
