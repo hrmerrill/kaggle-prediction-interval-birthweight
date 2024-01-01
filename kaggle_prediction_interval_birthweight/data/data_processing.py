@@ -113,6 +113,7 @@ class DataProcessor:
         pd.DataFrame
             The same data frame with missing data processed according to self.model_type.
         """
+        df = df.copy()
         for feature in MISSING_CODE.keys():
             # handle lists of multiple missing codes, where relevant
             missing_code = (
@@ -160,21 +161,16 @@ class DataProcessor:
         pd.DataFrame
             The data frame with removed and binarized columns.
         """
+        df = df.copy()
         # during the EDA, we decided to drop these
         keepers = list(set(VARIABLE_TYPE.keys()) - {"PAY", "ILP_R"})
         df = df.drop(["PAY", "ILP_R"], axis=1)
 
         # we also added a polynomial effect for one (transformed) feature
-        ilopr_missing_codes = [np.log(x + 0.1) for x in MISSING_CODE["ILOP_R"]]
         df["ILOP_R"] = np.log(df["ILOP_R"] + 0.1)
         df["ILOP_R_2"] = df["ILOP_R"] ** 2
         df["ILOP_R_3"] = df["ILOP_R"] ** 3
         keepers = keepers + ["ILOP_R_2", "ILOP_R_3"]
-
-        # NaNs and medians are taken care of, but for the tree-based model, use NaN
-        if self.model_type in ["HistBoostRegressor"]:
-            df.loc[df["ILOP_R"].isin(ilopr_missing_codes), "ILOP_R_2"] = None
-            df.loc[df["ILOP_R"].isin(ilopr_missing_codes), "ILOP_R_3"] = None
 
         numeric_features = list(
             set(keepers)
@@ -213,6 +209,7 @@ class DataProcessor:
         np.ndarray
             The array of transformed numerical features.
         """
+        df = df.copy()
         # for regression and neural networks, unskew those four features
         if self.model_type in [
             "RidgeRegressor",
@@ -283,6 +280,7 @@ class DataProcessor:
         np.ndarray
             The array of one-hot or integer encoded categorical features.
         """
+        df = df.copy()
         if self.feature_categories is None:
             self.feature_categories = {}
             for feature in self.categorical_features:
@@ -344,6 +342,7 @@ class DataProcessor:
         Tuple or np.ndarray
             the design matrix X and the response variable y, if present.
         """
+        df = df.copy()
         df = self._enforce_feature_types(df)
         df = self._process_missing_data(df)
         df = self._subset_and_binarize(df)

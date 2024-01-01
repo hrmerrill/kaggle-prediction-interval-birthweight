@@ -26,8 +26,8 @@ class HistBoostRegressor:
         self.alpha = alpha
         self.categorical_feature_mask = categorical_feature_mask
         param_grid = {
-            "l2_regularization": [0, 0.01],
-            "learning_rate": [0.3, 0.15],
+            "l2_regularization": [0, 1, 2],
+            "learning_rate": [0.3, 0.4],
         }
         self.lower_regressor = GridSearchCV(
             estimator=HistGradientBoostingRegressor(
@@ -35,9 +35,9 @@ class HistBoostRegressor:
                 quantile=(1 - alpha) / 2,
                 max_iter=1000,
                 categorical_features=self.categorical_feature_mask,
-                max_leaf_nodes=26,
-                max_depth=3,
-                min_samples_leaf=83,
+                max_leaf_nodes=21,
+                max_depth=4,
+                min_samples_leaf=100,
             ),
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=(1 - alpha) / 2)),
@@ -49,9 +49,9 @@ class HistBoostRegressor:
                 quantile=alpha + (1 - alpha) / 2,
                 max_iter=1000,
                 categorical_features=self.categorical_feature_mask,
-                max_leaf_nodes=26,
-                max_depth=3,
-                min_samples_leaf=83,
+                max_leaf_nodes=21,
+                max_depth=4,
+                min_samples_leaf=100,
             ),
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=alpha + (1 - alpha) / 2)),
@@ -63,9 +63,9 @@ class HistBoostRegressor:
                 loss="quantile",
                 max_iter=1000,
                 categorical_features=self.categorical_feature_mask,
-                max_leaf_nodes=26,
-                max_depth=3,
-                min_samples_leaf=83,
+                max_leaf_nodes=21,
+                max_depth=4,
+                min_samples_leaf=100,
             ),
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=0.5)),

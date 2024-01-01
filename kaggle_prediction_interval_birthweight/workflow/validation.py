@@ -11,7 +11,7 @@ from kaggle_prediction_interval_birthweight.workflow.metric import score
 class Validator:
     """Class containing methods for cross-validation."""
 
-    def __init__(self, model_type: str, n_folds: int = 2, **kwargs) -> None:
+    def __init__(self, model_type: str, n_folds: int = 5, **kwargs) -> None:
         """
         Parameters
         ----------

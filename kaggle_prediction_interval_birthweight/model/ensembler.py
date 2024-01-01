@@ -2,7 +2,7 @@ from typing import Tuple
 
 import numpy as np
 import pandas as pd
-from mapie.quantile_regression import MapieQuantileRegressor
+from mapie.regression import MapieQuantileRegressor
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.metrics import d2_pinball_score, make_scorer
 from sklearn.model_selection import GridSearchCV, train_test_split
@@ -200,13 +200,13 @@ class HistBoostEnsembler(BaseEnsembler):
         df = self.prepare_data(df)
         categorical_feature_mask = np.concatenate(
             [
-                self.boost_data_processor.categorical_features,
                 np.ndarray([False] * len(self.upstream_predictions)),
+                self.boost_data_processor.categorical_features,
             ]
         )
         param_grid = {
-            "l2_regularization": [0, 0.01],
-            "learning_rate": [0.3, 0.15],
+            "l2_regularization": [0, 1, 2],
+            "learning_rate": [0.3, 0.4],
         }
         self.lower_regressor = GridSearchCV(
             estimator=HistGradientBoostingRegressor(
@@ -214,9 +214,9 @@ class HistBoostEnsembler(BaseEnsembler):
                 loss="quantile",
                 max_iter=1000,
                 categorical_features=categorical_feature_mask,
-                max_leaf_nodes=26,
-                max_depth=3,
-                min_samples_leaf=83,
+                max_leaf_nodes=21,
+                max_depth=4,
+                min_samples_leaf=100,
             ),
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=(1 - self.alpha) / 2)),
@@ -228,9 +228,9 @@ class HistBoostEnsembler(BaseEnsembler):
                 loss="quantile",
                 max_iter=1000,
                 categorical_features=categorical_feature_mask,
-                max_leaf_nodes=26,
-                max_depth=3,
-                min_samples_leaf=83,
+                max_leaf_nodes=21,
+                max_depth=4,
+                min_samples_leaf=100,
             ),
             param_grid=param_grid,
             scoring=make_scorer(
@@ -244,9 +244,9 @@ class HistBoostEnsembler(BaseEnsembler):
                 loss="quantile",
                 max_iter=1000,
                 categorical_features=categorical_feature_mask,
-                max_leaf_nodes=26,
-                max_depth=3,
-                min_samples_leaf=83,
+                max_leaf_nodes=21,
+                max_depth=4,
+                min_samples_leaf=100,
             ),
             param_grid=param_grid,
             scoring=make_scorer(lambda o, p: d2_pinball_score(o, p, alpha=0.5)),
