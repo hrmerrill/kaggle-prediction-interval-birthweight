@@ -70,7 +70,7 @@ class BaseEnsembler:
         """
         df = df.copy()
 
-        # save the data processors, so standardization parameters are available later
+        # save and initialize data processors, so standardization parameters are available later
         self.ridge_data_processor = DataProcessor(model_type="RidgeRegressor")
         self.boost_data_processor = DataProcessor(model_type="HistBoostRegressor")
         self.nn_data_processor = DataProcessor(model_type="MissingnessNeuralNetRegressor")
@@ -82,6 +82,7 @@ class BaseEnsembler:
         _ = self.nnc_data_processor(df)
         _ = self.eim_data_processor(df)
 
+        # initialize all models
         self.histboosters = [
             HistBoostRegressor(
                 alpha=self.alpha,
@@ -102,7 +103,7 @@ class BaseEnsembler:
         for feature in self.upstream_predictions:
             df[feature] = np.nan
 
-        # loop across splits, fit and prediction from upstream models
+        # loop across splits, fit and predict from upstream models
         for k in range(self.n_folds):
             print(f"Ensembler fold {k+1} of {self.n_folds} begins.")
 
@@ -110,7 +111,7 @@ class BaseEnsembler:
             df_train = df.query("fold != @k")
             df_test = df.query("fold == @k")
 
-            # prepare the data for both ridge and histboost regression
+            # prepare the data for each model
             xr_train, yr_train = self.ridge_data_processor(df_train)
             xr_test = self.ridge_data_processor(df_test.drop("DBWT", axis=1))
 
@@ -198,15 +199,16 @@ class HistBoostEnsembler(BaseEnsembler):
             The input data
         """
         df = self.prepare_data(df)
+        # update the categorical feature mask (upstream predictions are numeric)
         categorical_feature_mask = np.concatenate(
             [
-                np.ndarray([False] * len(self.upstream_predictions)),
+                np.array([False] * len(self.upstream_predictions)),
                 self.boost_data_processor.categorical_features,
             ]
         )
         param_grid = {
             "l2_regularization": [0, 1, 2],
-            "learning_rate": [0.3, 0.4],
+            "learning_rate": [0.15, 0.2],
         }
         self.lower_regressor = GridSearchCV(
             estimator=HistGradientBoostingRegressor(

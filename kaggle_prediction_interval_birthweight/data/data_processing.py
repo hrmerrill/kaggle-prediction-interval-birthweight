@@ -72,7 +72,7 @@ class DataProcessor:
         """
         df = df.copy()
 
-        # convert that timestamp column to an actual timestamp. First, as a string
+        # convert that timestamp column to epoch. First, as a string
         fake_datetime = "1970-01-01 " + df[TIMESTAMP_COL_NAME].astype(str).str.zfill(4)
 
         # preserve the missing values, but create a new code for it
@@ -197,6 +197,7 @@ class DataProcessor:
         df["ILLB_R"] = (df["ILLB_R"] >= np.exp(2.75)).astype(str)
         numeric_features = list(set(numeric_features) - {"ILLB_R"})
 
+        # heights are clipped to a reasonable range
         df["M_Ht_In"] = df["M_Ht_In"].clip(48, 78)
 
         # set the list of numeric and categorical features, to refer to in later methods
@@ -296,6 +297,7 @@ class DataProcessor:
             for feature in self.categorical_features:
                 self.feature_categories[feature] = np.sort(df[feature].dropna().unique())
 
+        # the HistBoostRegressor uses integer-encoded categorical features
         if self.model_type in ["HistBoostRegressor"]:
             x_integers_list = []
             for feature in self.categorical_features:
@@ -358,19 +360,24 @@ class DataProcessor:
         df = self._subset_and_binarize(df)
         X_numeric = self._prepare_numerical_features(df)
         X_categorical = self._prepare_categorical_features(df)
+
+        # save the categorical feature mask to pass to the HistBoostRegressor
         self.categorical_features = np.concatenate(
             [np.zeros(X_numeric.shape[1]), np.ones(X_categorical.shape[1])]
         ).astype(bool)
         X = np.hstack([X_numeric, X_categorical])
 
+        # For numerical stability, remove columns that are degenerate
         if self.model_type not in ["HistBoostRegressor"]:
             if self.nondegenerate_columns is None:
                 self.nondegenerate_columns = (X.max(axis=0) - X.min(axis=0)) != 0
             X = X[:, self.nondegenerate_columns]
 
         if "DBWT" in df.columns:
+            # The ridge regressor will model the standardized weight
             if self.model_type in ["RidgeRegressor"]:
                 y = (df["DBWT"].values.reshape((-1, 1)) - Y_MEAN) / Y_SD
+            # The classifier will model binned weights
             elif self.model_type in ["MissingnessNeuralNetClassifier"]:
                 bin_edges = np.concatenate(
                     [
@@ -381,8 +388,11 @@ class DataProcessor:
                 )
                 y = pd.cut(df["DBWT"], bins=bin_edges, retbins=False, labels=False).values
                 self.bin_values = BIN_LABELS
+            # the HistBoostRegressor will directly model the raw response variable
             elif self.model_type in ["HistBoostRegressor"]:
                 y = df["DBWT"].values
+            # the neural networks will all work on a transformed scale (to enforce the lower
+            # prediction interval to always be positive)
             else:
                 y = np_softplus_inv(df["DBWT"].values.reshape((-1, 1)) / SOFTPLUS_SCALE)
 

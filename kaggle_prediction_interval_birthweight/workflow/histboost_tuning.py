@@ -21,30 +21,28 @@ BASE_PARAMETER_SPACE = [
 
 SAVED_PRIOR_RUNS = {
     "y0": [
-        -0.16633246,
-        -0.16091768,
-        -0.13950934,
-        -0.16728207,
-        -0.16694231,
-        -0.12037622,
-        -0.14593816,
-        -0.05695383,
-        -0.03937143,
-        -0.03761677,
-        -0.18808337,
+        -0.19476483,
+        -0.21084902,
+        -0.19296199,
+        -0.20374554,
+        -0.20260468,
+        -0.20521543,
+        -0.21441505,
+        -0.21411501,
+        -0.2090968,
+        -0.21109029,
     ],
     "x0": [
-        [0.9807412289900471, 0.46003068044903095, 2, 50, 31],
-        [0.015478974396671025, 0.0008700690210600545, 7, 47, 86],
-        [0.008706037847015437, 0.004195085318955972, 5, 15, 58],
-        [0.5519326346081447, 0.0019320752621429876, 5, 47, 80],
-        [0.140576118573469, 0.10322562466964824, 2, 28, 88],
-        [0.9411207450235306, 0.0009091272186646576, 1, 6, 83],
-        [0.011314027385678655, 0.12547454048063264, 10, 50, 30],
-        [0.0010114989173207183, 0.03800088790514866, 2, 8, 18],
-        [0.0010879793134300766, 0.7352148794247115, 1, 43, 99],
-        [0.0010045137961386004, 0.0019569974458949688, 1, 49, 79],
-        [0.2889736014221303, 1.0, 4, 21, 100],
+        [0.5932517736067934, 8.44265904315269, 9, 43, 128],
+        [0.3849973255854072, 2.975353090098658, 2, 17, 101],
+        [0.8123565600467179, 4.79977692397885, 5, 43, 74],
+        [0.6485237001791461, 3.682421715990082, 10, 11, 175],
+        [0.4741344372284369, 8.009109510688925, 6, 36, 147],
+        [0.5824377722830322, 5.373736920757813, 8, 10, 100],
+        [0.18714601098343323, 7.369184402107811, 3, 11, 72],
+        [0.15052519231649952, 2.223221659301995, 4, 46, 95],
+        [0.6134503944262484, 9.023486808254013, 2, 49, 134],
+        [0.17173867555090913, 3.5815280881735814, 8, 32, 72],
     ],
 }
 
@@ -111,8 +109,11 @@ class HistBoostTuner:
                 xtest = X[fold_ids == fold]
                 ytest = y[fold_ids == fold]
 
+                # a calibration set should be included if Mapie is used during tuning
                 if include_mapie:
-                    xtr, xval, ytr, yval = train_test_split(xtr, ytr, random_state=0, test_size=0.3)
+                    xtr, xval, ytr, yval = train_test_split(
+                        xtr, ytr, random_state=fold, test_size=0.3
+                    )
 
                 # all three models get the same parameters
                 lower_regressor = HistGradientBoostingRegressor(
@@ -140,6 +141,7 @@ class HistBoostTuner:
                 lower_regressor.fit(xtr, ytr.squeeze())
                 upper_regressor.fit(xtr, ytr.squeeze())
 
+                # if using Mapie, the objective to minimize is NOIS
                 if include_mapie:
                     calibrator = MapieQuantileRegressor(
                         [lower_regressor, upper_regressor, median_regressor],
@@ -152,28 +154,29 @@ class HistBoostTuner:
                     lower, upper = intervals.squeeze().T
                     nois, _ = score(ytest.squeeze(), lower, upper, self.alpha)
                     scores.append(nois)
+                # Otherwise, we'll minimize the average quantile losses
                 else:
                     pred_median = median_regressor.predict(xtest)
                     pred_lower = lower_regressor.predict(xtest)
                     pred_upper = upper_regressor.predict(xtest)
 
-                    scores.append(d2_pinball_score(ytest.squeeze(), pred_median, alpha=0.5))
+                    scores.append(-d2_pinball_score(ytest.squeeze(), pred_median, alpha=0.5))
                     scores.append(
-                        d2_pinball_score(ytest.squeeze(), pred_lower, alpha=(1 - self.alpha) / 2)
+                        -d2_pinball_score(ytest.squeeze(), pred_lower, alpha=(1 - self.alpha) / 2)
                     )
                     scores.append(
-                        d2_pinball_score(
+                        -d2_pinball_score(
                             ytest.squeeze(), pred_upper, alpha=self.alpha + (1 - self.alpha) / 2
                         )
                     )
 
-            return -np.mean(scores)
+            return np.mean(scores)
 
         self.res_gp = gp_minimize(
             objective,
             self.parameter_space,
             n_calls=50,
-            random_state=0,
+            random_state=1,
             acq_func="EI",
             verbose=self.verbose,
             y0=SAVED_PRIOR_RUNS["y0"],

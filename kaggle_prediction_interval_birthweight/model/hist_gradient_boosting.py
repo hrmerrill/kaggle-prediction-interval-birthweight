@@ -25,9 +25,12 @@ class HistBoostRegressor:
         """
         self.alpha = alpha
         self.categorical_feature_mask = categorical_feature_mask
+
+        # some parameters I'm using from an optimization run, but I'm allowing some additional
+        # tuning just in case the different quantiles have different optimal parameters.
         param_grid = {
             "l2_regularization": [0, 1, 2],
-            "learning_rate": [0.3, 0.4],
+            "learning_rate": [0.15, 0.2],
         }
         self.lower_regressor = GridSearchCV(
             estimator=HistGradientBoostingRegressor(

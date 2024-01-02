@@ -1,12 +1,3 @@
-"""
-DenseMissing layer that outputs an expected RELU whenever input features are missing.
-
-Adapted from https://github.com/lstruski/Processing-of-missing-data-by-neural-networks/
-    blob/master/mlp.py
-Paper: https://arxiv.org/pdf/1805.07405.pdf
-EM algorithm: https://arxiv.org/pdf/1209.0521.pdf and https://arxiv.org/pdf/1902.03335.pdf
-"""
-
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -82,7 +73,7 @@ class MissingnessNeuralNetRegressor:
         missingness_present = np.isnan(X).any()
         inputs = tf.keras.layers.Input(shape=(X.shape[-1],))
 
-        # first layer must be DenseMissing to accomodate missing values
+        # first & skip layers must be DenseMissing to accomodate missing values
         if missingness_present:
             next_output = DenseMissing(units=self.units_list[0], n_components=self.n_components)(
                 inputs
@@ -202,10 +193,12 @@ class MissingnessNeuralNetRegressor:
             the arrays corresponding to the lower and upper bounds, respectively
         """
         if self.bayesian:
+            # create white noise from which to draw SHASH samples
             predicted_samples = np.random.randn(n_samples, X.shape[0])
             for i, sample in tqdm(
                 enumerate(predicted_samples), total=n_samples, desc="Sampling from model"
             ):
+                # make a probabilistic prediction (dropout is still turned on)
                 model_outputs = self.model(X).numpy()
                 if model_outputs.shape[-1] == 4:
                     center, spread, skew, tail = model_outputs.T
@@ -214,6 +207,7 @@ class MissingnessNeuralNetRegressor:
                     tail = 1.0
                 spread = spread + 1e-3
 
+                # now draw the SHASH variable from that prediction
                 prediction = center + (tail * spread) * (
                     np.sinh((1 / tail) * np.arcsinh(sample) + skew / tail)
                 )
@@ -236,6 +230,8 @@ class MissingnessNeuralNetRegressor:
                 center, spread, skew = model_outputs.T
                 tail = 1.0
 
+            # Here instead of using the 5 and 95% quantiles as endpoints, we can search for the
+            # 95% interval that is smallest (e.g., maybe [2%, 92%] is smaller than [5%, 95%])
             buffers = np.linspace(-((1 - alpha) / 2) + 1e-6, ((1 - alpha) / 2) - 1e-6, 20)
             widths = []
             for buffer in buffers:
@@ -247,6 +243,8 @@ class MissingnessNeuralNetRegressor:
                     (1 / tail) * np.arcsinh(st.norm.ppf((1 - alpha) / 2) - buffer) + skew / tail
                 )
                 widths.append((np_softplus(upper_edge) - np_softplus(lower_edge)).reshape((-1, 1)))
+
+            # for each row, optimal buffer percentage is the one that produces the shortest width
             opt_buffers = buffers[np.hstack(widths).argmin(axis=1)]
 
             lower = center + (tail * spread) * np.sinh(
@@ -311,6 +309,7 @@ class MapieHelper:
             the lower bounds, upper bounds, or medians, if self.which_pred is 0, 1, or 2,
             respectively.
         """
+        # for the classifier, we'll search for the narrowest interval that contains 95% mass
         if self.which_type == "classifier":
 
             def get_smallest_interval_rowwise(row, alpha=self.alpha, bin_values=self.bin_values):
@@ -340,6 +339,7 @@ class MapieHelper:
                 [lower.reshape((-1, 1)), upper.reshape((-1, 1)), median.reshape((-1, 1))]
             )
 
+        # the EIM model predicts intervals directly.
         elif self.which_type == "EIM":
             outputs = self.model.predict(X)
 
@@ -401,7 +401,7 @@ class MissingnessNeuralNetClassifier:
         missingness_present = np.isnan(X).any()
         inputs = tf.keras.layers.Input(shape=(X.shape[-1],))
 
-        # first layer must be DenseMissing to accomodate missing values
+        # first and skip layers must be DenseMissing to accomodate missing values
         if missingness_present:
             next_output = DenseMissing(units=self.units_list[0], n_components=self.n_components)(
                 inputs
@@ -563,7 +563,7 @@ class MissingnessNeuralNetEIM:
         missingness_present = np.isnan(X).any()
         inputs = tf.keras.layers.Input(shape=(X.shape[-1],))
 
-        # first layer must be DenseMissing to accomodate missing values
+        # first and skip layers must be DenseMissing to accomodate missing values
         if missingness_present:
             next_output = DenseMissing(units=self.units_list[0], n_components=self.n_components)(
                 inputs

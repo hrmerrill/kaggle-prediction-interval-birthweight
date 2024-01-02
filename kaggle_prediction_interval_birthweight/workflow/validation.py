@@ -42,6 +42,8 @@ class Validator:
         df = df.copy()
         df["cv_fold"] = np.random.choice(self.n_folds, df.shape[0])
 
+        # Since the HistBoostRegressor requires the categorical feature mask at instantiation,
+        # create a dummy data processor here to obtain it
         if self.model_type == "HistBoostRegressor":
             throw_away_data_processor = DataProcessor("HistBoostRegressor")
             _ = throw_away_data_processor(df)
@@ -52,6 +54,7 @@ class Validator:
                 )
                 for _ in range(self.n_folds)
             ]
+        # all other model types can be retrieved the same way
         else:
             self.models = [
                 getattr(kaggle_models, self.model_type)(**self.kwargs) for _ in range(self.n_folds)
@@ -64,6 +67,7 @@ class Validator:
             df_train = df.query("cv_fold != @cv_fold")
             df_test = df.query("cv_fold == @cv_fold")
 
+            # the ensemblers operate on the dataframes, and the other models use data processors
             if self.model_type not in ["HistBoostEnsembler", "NeuralNetEnsembler"]:
                 x_train, y_train = self.data_processors[cv_fold](df_train)
                 x_test, y_test = self.data_processors[cv_fold](df_test)
@@ -77,6 +81,7 @@ class Validator:
             upper_list.append(upper)
             observations_list.append(df_test["DBWT"].values)
 
+        # store results so that metrics can be computed later
         self.lower_bounds = np.concatenate(lower_list)
         self.upper_bounds = np.concatenate(upper_list)
         self.observations = np.concatenate(observations_list)
@@ -119,4 +124,5 @@ class Validator:
             lowers.append(lower.reshape((-1, 1)))
             uppers.append(upper.reshape((-1, 1)))
 
+        # the prediction is the average prediction across each validation fold
         return np.hstack(lowers).mean(axis=1), np.hstack(uppers).mean(axis=1)

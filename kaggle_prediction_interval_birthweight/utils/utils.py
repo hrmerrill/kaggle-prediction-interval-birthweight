@@ -3,6 +3,8 @@ from typing import Optional, Tuple
 import numpy as np
 import tensorflow as tf
 
+TFPI = tf.constant(3.14159265359, dtype=tf.float32)
+
 
 def np_softplus(x: np.ndarray) -> np.ndarray:
     """Helper function for computing softplus without overflow."""
@@ -41,9 +43,6 @@ def compute_highest_density_interval(samples: np.ndarray, alpha: float = 0.9) ->
     smallest_interval = np.argmin(widths)
 
     return samples[smallest_interval], samples[smallest_interval + n_samples_in_hdi]
-
-
-TFPI = tf.constant(3.14159265359, dtype=tf.float32)
 
 
 @tf.function
@@ -112,6 +111,16 @@ def expected_relu(mu: tf.Tensor, sigma_sq: tf.Tensor) -> tf.Tensor:
         where_missing, expected_relu_values, (mu + tf.math.abs(mu)) / 2.0
     )
     return expected_relu_values
+
+
+"""
+DenseMissing layer that outputs an expected RELU whenever input features are missing.
+
+Adapted from https://github.com/lstruski/Processing-of-missing-data-by-neural-networks/
+    blob/master/mlp.py
+Paper: https://arxiv.org/pdf/1805.07405.pdf
+EM algorithm: https://arxiv.org/pdf/1209.0521.pdf and https://arxiv.org/pdf/1902.03335.pdf
+"""
 
 
 class DenseMissing(tf.keras.layers.Layer):
@@ -332,7 +341,8 @@ def eim_loss(
 
     https://arxiv.org/pdf/1806.11222.pdf Eqns 11-14
 
-    If y_pred has three columns, the third is assumed to be the predicted median.
+    If y_pred has three columns, the third is assumed to be the predicted median (useful for
+    calibrating with Mapie later).
 
     Parameters
     ----------

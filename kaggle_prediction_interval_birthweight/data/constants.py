@@ -1,9 +1,11 @@
 import numpy as np
 
+# Some constants used for transforming the response variable for different models
 Y_MEAN = 3260
 Y_SD = 590
 SOFTPLUS_SCALE = 1000
 
+# Here I keep track of different variable types and codes corresponding to missingness
 VARIABLE_TYPE = {
     "ATTEND": "categorical",
     "BFACIL": "categorical",
