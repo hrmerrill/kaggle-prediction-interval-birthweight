@@ -193,12 +193,12 @@ class DataProcessor:
             )
         )
         # we also decided to binarize ILLB_R, so do that here, make it a string, and remove it from
-        # the list of numeric features
-        df["ILLB_R"] = (df["ILLB_R"] >= np.exp(2.75)).astype(str)
-        numeric_features = list(set(numeric_features) - {"ILLB_R"})
+        # # the list of numeric features
+        # df["ILLB_R"] = (df["ILLB_R"] >= np.exp(2.75)).astype(str)
+        # numeric_features = list(set(numeric_features) - {"ILLB_R"})
 
-        # heights are clipped to a reasonable range
-        df["M_Ht_In"] = df["M_Ht_In"].clip(48, 78)
+        # # heights are clipped to a reasonable range
+        # df["M_Ht_In"] = df["M_Ht_In"].clip(48, 78)
 
         # set the list of numeric and categorical features, to refer to in later methods
         self.numeric_features = numeric_features
@@ -228,7 +228,7 @@ class DataProcessor:
             "MissingnessNeuralNetClassifier",
             "MissingnessNeuralNetEIM",
         ]:
-            for feature in ["CIG_0", "PRIORDEAD", "PRIORLIVE", "PRIORTERM", "RF_CESARN"]:
+            for feature in ["CIG_0", "PRIORDEAD", "PRIORLIVE", "PRIORTERM", "RF_CESARN", "ILLB_R"]:
                 df[feature] = np.log(df[feature] + 0.1)
 
         x_numeric = df[self.numeric_features].values

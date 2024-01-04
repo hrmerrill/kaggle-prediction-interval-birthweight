@@ -22,9 +22,9 @@ class MissingnessNeuralNetRegressor:
 
     def __init__(
         self,
-        units_list: List[int] = [200, 200, 200],
+        units_list: List[int] = [235, 235],
         n_components: int = 3,
-        dropout_rate: float = 0.3,
+        dropout_rate: float = 0.8,
         bayesian: bool = False,
         fit_tail: bool = True,
         batch_size: int = 1000,
@@ -352,9 +352,9 @@ class MissingnessNeuralNetClassifier:
     def __init__(
         self,
         bin_values: np.ndarray = BIN_LABELS,
-        units_list: List[int] = [200, 200, 200],
+        units_list: List[int] = [235, 235],
         n_components: int = 3,
-        dropout_rate: float = 0.3,
+        dropout_rate: float = 0.8,
         batch_size: int = 1000,
         alpha: float = 0.9,
         n_epochs: int = 1000,
@@ -512,9 +512,9 @@ class MissingnessNeuralNetEIM:
 
     def __init__(
         self,
-        units_list: List[int] = [200, 200, 200],
+        units_list: List[int] = [235, 235],
         n_components: int = 3,
-        dropout_rate: float = 0.3,
+        dropout_rate: float = 0.8,
         batch_size: int = 1000,
         alpha: float = 0.9,
         n_epochs: int = 1000,

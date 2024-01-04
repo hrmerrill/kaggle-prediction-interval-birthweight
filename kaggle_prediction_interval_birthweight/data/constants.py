@@ -57,7 +57,7 @@ MISSING_CODE = {
     "DOB_WK": None,
     "FAGECOMB": 99,
     "FEDUC": "9",
-    "ILLB_R": 999,
+    "ILLB_R": [888, 999],
     "ILOP_R": [888, 999],
     "ILP_R": 999,
     "LD_INDL": None,
