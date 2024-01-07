@@ -166,7 +166,10 @@ class MissingnessNeuralNetRegressor:
             shuffle=True,
             callbacks=[
                 tf.keras.callbacks.EarlyStopping(
-                    patience=50, restore_best_weights=True, min_delta=0.0001
+                    patience=10,
+                    restore_best_weights=True,
+                    min_delta=0.0001,
+                    start_from_epoch=50,
                 ),
                 tf.keras.callbacks.TerminateOnNaN(),
             ],
@@ -352,9 +355,9 @@ class MissingnessNeuralNetClassifier:
     def __init__(
         self,
         bin_values: np.ndarray = BIN_LABELS,
-        units_list: List[int] = [235, 235],
+        units_list: List[int] = [5, 5, 5],
         n_components: int = 3,
-        dropout_rate: float = 0.8,
+        dropout_rate: float = 0.4,
         batch_size: int = 1000,
         alpha: float = 0.9,
         n_epochs: int = 1000,
@@ -466,7 +469,10 @@ class MissingnessNeuralNetClassifier:
             shuffle=True,
             callbacks=[
                 tf.keras.callbacks.EarlyStopping(
-                    patience=50, restore_best_weights=True, min_delta=0.0001
+                    patience=10,
+                    restore_best_weights=True,
+                    min_delta=0.0001,
+                    start_from_epoch=50,
                 ),
                 tf.keras.callbacks.TerminateOnNaN(),
             ],
@@ -512,9 +518,9 @@ class MissingnessNeuralNetEIM:
 
     def __init__(
         self,
-        units_list: List[int] = [235, 235],
+        units_list: List[int] = [275, 275, 275, 275],
         n_components: int = 3,
-        dropout_rate: float = 0.8,
+        dropout_rate: float = 0.4,
         batch_size: int = 1000,
         alpha: float = 0.9,
         n_epochs: int = 1000,
@@ -665,7 +671,10 @@ class MissingnessNeuralNetEIM:
             shuffle=True,
             callbacks=[
                 tf.keras.callbacks.EarlyStopping(
-                    patience=50, restore_best_weights=True, min_delta=0.0001
+                    patience=10,
+                    restore_best_weights=True,
+                    min_delta=0.0001,
+                    start_from_epoch=50,
                 ),
                 tf.keras.callbacks.TerminateOnNaN(),
             ],
