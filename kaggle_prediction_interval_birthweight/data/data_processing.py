@@ -232,8 +232,7 @@ class DataProcessor:
         # for the ridge regressor, give it a chance at nonlinear effects
         if self.model_type == "RidgeRegressor":
             x_numeric_sq = x_numeric * x_numeric
-            x_numeric_cu = x_numeric_sq * x_numeric
-            x_numeric = np.hstack([x_numeric, x_numeric_sq, x_numeric_cu])
+            x_numeric = np.hstack([x_numeric, x_numeric_sq])
 
         # for the linear regression, we will decorrelate the continuous features
         if self.model_type == "RidgeRegressor":
