@@ -9,6 +9,7 @@ from kaggle_prediction_interval_birthweight.model.neural_network import (
     SOFTPLUS_SCALE,
     MissingnessNeuralNetRegressor,
 )
+from kaggle_prediction_interval_birthweight.model.wildwood import WildWoodRegressor
 from kaggle_prediction_interval_birthweight.utils.utils import np_softplus_inv
 from kaggle_prediction_interval_birthweight.workflow.validation import Validator
 
@@ -31,7 +32,7 @@ def create_submission(
     Parameters
     ----------
     model_type: str
-        The type of model to use. One of RidgeRegressor, HistBoostRegressor,
+        The type of model to use. One of RidgeRegressor, HistBoostRegressor, WildWoodRegressor,
         MissingnessNeuralNetRegressor, MissingnessNeuralNetClassifier,
         MissingnessNeuralNetEIM, HistBoostEnsembler, or NeuralNetEnsembler
     train_data_path: str
@@ -77,6 +78,7 @@ def create_hail_mary_submission(
     all_types = [
         "RidgeRegressor",
         "HistBoostRegressor",
+        "WildWoodRegressor",
         "MissingnessNeuralNetRegressor",
         "MissingnessNeuralNetClassifier",
         "MissingnessNeuralNetEIM",
@@ -112,15 +114,15 @@ def create_hail_mary_submission(
     test_ensemble = np.hstack([x.reshape((-1, 1)) for x in test_ensemble])
     train_y = np_softplus_inv(train_data["DBWT"] / SOFTPLUS_SCALE)
 
-    print("Training the hail mary neural network.")
-    model_nn = MissingnessNeuralNetRegressor(bayesian=True, fit_tail=False)
-    model_nn.fit(train_ensemble, train_y)
-    lower_nn, upper_nn = model_nn.predict_intervals(test_ensemble, alpha=0.9, n_samples=2000)
+    print("Training the hail mary wildwood regressor.")
+    model_ww = WildWoodRegressor()
+    model_ww.fit(train_ensemble, train_data["DBWT"])
+    lower_ww, upper_ww = model_ww.predict_intervals(test_ensemble)
 
-    test_data[["id"]].assign(pi_lower=lower_nn, pi_upper=upper_nn).to_csv(
-        LOCAL_DIR + "submission_hail_mary_nn.csv", index=False
+    test_data[["id"]].assign(pi_lower=lower_ww, pi_upper=upper_ww).to_csv(
+        LOCAL_DIR + "submission_hail_mary_ww.csv", index=False
     )
-    print("Submission file saved to: \n" + LOCAL_DIR + "submission_hail_mary_nn.csv")
+    print("Submission file saved to: \n" + LOCAL_DIR + "submission_hail_mary_ww.csv")
 
     print("Training the hail mary histboost regressor.")
     model_hb = HistBoostRegressor()
@@ -131,3 +133,13 @@ def create_hail_mary_submission(
         LOCAL_DIR + "submission_hail_mary_hb.csv", index=False
     )
     print("Submission file saved to: \n" + LOCAL_DIR + "submission_hail_mary_hb.csv")
+
+    print("Training the hail mary neural network.")
+    model_nn = MissingnessNeuralNetRegressor(bayesian=True, fit_tail=False)
+    model_nn.fit(train_ensemble, train_y)
+    lower_nn, upper_nn = model_nn.predict_intervals(test_ensemble, alpha=0.9, n_samples=2000)
+
+    test_data[["id"]].assign(pi_lower=lower_nn, pi_upper=upper_nn).to_csv(
+        LOCAL_DIR + "submission_hail_mary_nn.csv", index=False
+    )
+    print("Submission file saved to: \n" + LOCAL_DIR + "submission_hail_mary_nn.csv")

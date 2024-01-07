@@ -32,9 +32,10 @@ class DataProcessor:
         Parameters
         ----------
         model_type: str
-            One of "RidgeRegressor", "HistBoostRegressor", "MissingnessNeuralNetRegressor",
-            "MissingnessNeuralNetEIM", or "MissingnessNeuralNetClassifier". Determines how data
-            are imputed and standardized before modeling.
+            One of "RidgeRegressor", "HistBoostRegressor", "WildWoodRegressor",
+            "MissingnessNeuralNetRegressor", "MissingnessNeuralNetEIM", or
+            "MissingnessNeuralNetClassifier". Determines how data are imputed and standardized
+            before modeling.
         standardization_parameters: Dict
             Precomputed columnwise means and sds or decorrelation matrix, if already computed.
             None during training, but at test time these values should be passed in.
@@ -45,6 +46,7 @@ class DataProcessor:
         allowed_model_types = [
             "RidgeRegressor",
             "HistBoostRegressor",
+            "WildWoodRegressor",
             "MissingnessNeuralNetRegressor",
             "MissingnessNeuralNetClassifier",
             "MissingnessNeuralNetEIM",
@@ -141,6 +143,7 @@ class DataProcessor:
                 "MissingnessNeuralNetClassifier",
                 "MissingnessNeuralNetEIM",
                 "HistBoostRegressor",
+                "WildWoodRegressor",
             ]:
                 replacement = None
             df.loc[df[feature].isin(missing_code), feature] = replacement
@@ -192,13 +195,6 @@ class DataProcessor:
                 ]
             )
         )
-        # we also decided to binarize ILLB_R, so do that here, make it a string, and remove it from
-        # # the list of numeric features
-        # df["ILLB_R"] = (df["ILLB_R"] >= np.exp(2.75)).astype(str)
-        # numeric_features = list(set(numeric_features) - {"ILLB_R"})
-
-        # # heights are clipped to a reasonable range
-        # df["M_Ht_In"] = df["M_Ht_In"].clip(48, 78)
 
         # set the list of numeric and categorical features, to refer to in later methods
         self.numeric_features = numeric_features
@@ -232,6 +228,12 @@ class DataProcessor:
                 df[feature] = np.log(df[feature] + 0.1)
 
         x_numeric = df[self.numeric_features].values
+
+        # for the ridge regressor, give it a chance at nonlinear effects
+        if self.model_type == "RidgeRegressor":
+            x_numeric_sq = x_numeric * x_numeric
+            x_numeric_cu = x_numeric_sq * x_numeric
+            x_numeric = np.hstack([x_numeric, x_numeric_sq, x_numeric_cu])
 
         # for the linear regression, we will decorrelate the continuous features
         if self.model_type == "RidgeRegressor":
@@ -297,8 +299,8 @@ class DataProcessor:
             for feature in self.categorical_features:
                 self.feature_categories[feature] = np.sort(df[feature].dropna().unique())
 
-        # the HistBoostRegressor uses integer-encoded categorical features
-        if self.model_type in ["HistBoostRegressor"]:
+        # the tree-based models use integer-encoded categorical features
+        if self.model_type in ["HistBoostRegressor", "WildWoodRegressor"]:
             x_integers_list = []
             for feature in self.categorical_features:
                 integer_mapping = {
@@ -368,7 +370,7 @@ class DataProcessor:
         X = np.hstack([X_numeric, X_categorical])
 
         # For numerical stability, remove columns that are degenerate
-        if self.model_type not in ["HistBoostRegressor"]:
+        if self.model_type not in ["HistBoostRegressor", "WildWoodRegressor"]:
             if self.nondegenerate_columns is None:
                 self.nondegenerate_columns = (X.max(axis=0) - X.min(axis=0)) != 0
             X = X[:, self.nondegenerate_columns]
@@ -389,7 +391,7 @@ class DataProcessor:
                 y = pd.cut(df["DBWT"], bins=bin_edges, retbins=False, labels=False).values
                 self.bin_values = BIN_LABELS
             # the HistBoostRegressor will directly model the raw response variable
-            elif self.model_type in ["HistBoostRegressor"]:
+            elif self.model_type in ["HistBoostRegressor", "WildWoodRegressor"]:
                 y = df["DBWT"].values
             # the neural networks will all work on a transformed scale (to enforce the lower
             # prediction interval to always be positive)

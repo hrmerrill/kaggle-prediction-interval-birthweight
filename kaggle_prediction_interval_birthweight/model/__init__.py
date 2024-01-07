@@ -9,10 +9,12 @@ from kaggle_prediction_interval_birthweight.model.neural_network import (
     MissingnessNeuralNetEIM,
     MissingnessNeuralNetRegressor,
 )
+from kaggle_prediction_interval_birthweight.model.wildwood import WildWoodRegressor
 
 __all__ = [
     "RidgeRegressor",
     "HistBoostRegressor",
+    "WildWoodRegressor",
     "MissingnessNeuralNetRegressor",
     "MissingnessNeuralNetClassifier",
     "MissingnessNeuralNetEIM",

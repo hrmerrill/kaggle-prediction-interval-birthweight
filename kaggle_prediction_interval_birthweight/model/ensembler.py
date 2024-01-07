@@ -17,6 +17,7 @@ from kaggle_prediction_interval_birthweight.model.neural_network import (
     MissingnessNeuralNetEIM,
     MissingnessNeuralNetRegressor,
 )
+from kaggle_prediction_interval_birthweight.model.wildwood import WildWoodRegressor
 from kaggle_prediction_interval_birthweight.utils.utils import (
     compute_highest_density_interval,
     np_softplus,
@@ -43,12 +44,14 @@ class BaseEnsembler:
 
         ridge_predictions = ["lower_ridge", "mean_ridge", "upper_ridge"]
         boost_predictions = ["lower_boost", "upper_boost"]
+        wildwood_predictions = ["lower_wildwood", "mean_wildwood", "upper_wildwood"]
         nn_predictions = ["center_nn", "scale_nn", "skew_nn", "tail_nn", "lower_nn", "upper_nn"]
         nnc_predictions = ["lower_nnc", "mode_nnc", "upper_nnc"]
         eim_predictions = ["lower_eim", "median_eim", "upper_eim"]
         self.upstream_predictions = (
             ridge_predictions
             + boost_predictions
+            + wildwood_predictions
             + nn_predictions
             + nnc_predictions
             + eim_predictions
@@ -73,11 +76,13 @@ class BaseEnsembler:
         # save and initialize data processors, so standardization parameters are available later
         self.ridge_data_processor = DataProcessor(model_type="RidgeRegressor")
         self.boost_data_processor = DataProcessor(model_type="HistBoostRegressor")
+        self.wildwood_data_processor = DataProcessor(model_type="WildWoodRegressor")
         self.nn_data_processor = DataProcessor(model_type="MissingnessNeuralNetRegressor")
         self.nnc_data_processor = DataProcessor(model_type="MissingnessNeuralNetClassifier")
         self.eim_data_processor = DataProcessor(model_type="MissingnessNeuralNetEIM")
         _ = self.ridge_data_processor(df)
         _ = self.boost_data_processor(df)
+        _ = self.wildwood_data_processor(df)
         _ = self.nn_data_processor(df)
         _ = self.nnc_data_processor(df)
         _ = self.eim_data_processor(df)
@@ -87,6 +92,13 @@ class BaseEnsembler:
             HistBoostRegressor(
                 alpha=self.alpha,
                 categorical_feature_mask=self.boost_data_processor.categorical_features,
+            )
+            for _ in range(self.n_folds)
+        ]
+        self.wildwood_regressors = [
+            WildWoodRegressor(
+                alpha=self.alpha,
+                categorical_feature_mask=self.wildwood_data_processor.categorical_features,
             )
             for _ in range(self.n_folds)
         ]
@@ -118,6 +130,9 @@ class BaseEnsembler:
             xb_train, yb_train = self.boost_data_processor(df_train)
             xb_test = self.boost_data_processor(df_test.drop("DBWT", axis=1))
 
+            xw_train, yw_train = self.wildwood_data_processor(df_train)
+            xw_test = self.wildwood_data_processor(df_test.drop("DBWT", axis=1))
+
             xn_train, yn_train = self.nn_data_processor(df_train)
             xn_test = self.nn_data_processor(df_test.drop("DBWT", axis=1))
 
@@ -142,6 +157,14 @@ class BaseEnsembler:
             boost_lower, boost_upper = self.histboosters[k].predict_intervals(xb_test)
             df.loc[df["fold"] == k, "lower_boost"] = boost_lower.squeeze() / SOFTPLUS_SCALE
             df.loc[df["fold"] == k, "upper_boost"] = boost_upper.squeeze() / SOFTPLUS_SCALE
+
+            print("Training the wildwood model.")
+            self.wildwood_regressors[k].fit(xw_train, yw_train)
+            wildwood_mean = self.wildwood_regressors[k].regressor.predict(xw_test)
+            wildwood_lower, wildwood_upper = self.wildwood_regressors[k].predict_intervals(xw_test)
+            df.loc[df["fold"] == k, "lower_wildwood"] = wildwood_lower.squeeze() / SOFTPLUS_SCALE
+            df.loc[df["fold"] == k, "mean_wildwood"] = wildwood_mean.squeeze() / SOFTPLUS_SCALE
+            df.loc[df["fold"] == k, "upper_wildwood"] = wildwood_upper.squeeze() / SOFTPLUS_SCALE
 
             print("Training the neural network regressor.")
             self.nn_regressors[k].fit(xn_train, yn_train)
@@ -301,6 +324,7 @@ class HistBoostEnsembler(BaseEnsembler):
 
         xr = self.ridge_data_processor(df)
         xb = self.boost_data_processor(df)
+        xw = self.wildwood_data_processor(df)
         xn = self.nn_data_processor(df)
         xnc = self.nnc_data_processor(df)
         xeim = self.eim_data_processor(df)
@@ -310,6 +334,8 @@ class HistBoostEnsembler(BaseEnsembler):
             rm = self.ridge_regressors[k].predict(xr)
             rl, ru = self.ridge_regressors[k].predict_intervals(xr)
             hl, hu = self.histboosters[k].predict_intervals(xb)
+            wm = self.wildwood_regressors[k].regressor.predict(xw)
+            wl, wu = self.wildwood_regressors[k].predict_intervals(xw)
             nc, ns, nk, nt = self.nn_regressors[k].model(xn).numpy().T
             nl, nu = self.nn_regressors[k].predict_intervals(xn)
             nncm = self.nnc_data_processor.bin_values[
@@ -325,6 +351,9 @@ class HistBoostEnsembler(BaseEnsembler):
                     ru.reshape((-1, 1)) / SOFTPLUS_SCALE,
                     hl.reshape((-1, 1)) / SOFTPLUS_SCALE,
                     hu.reshape((-1, 1)) / SOFTPLUS_SCALE,
+                    wl.reshape((-1, 1)) / SOFTPLUS_SCALE,
+                    wm.reshape((-1, 1)) / SOFTPLUS_SCALE,
+                    wu.reshape((-1, 1)) / SOFTPLUS_SCALE,
                     nc.reshape((-1, 1)),
                     ns.reshape((-1, 1)),
                     nk.reshape((-1, 1)),
@@ -416,6 +445,7 @@ class NeuralNetEnsembler(BaseEnsembler):
 
         xr = self.ridge_data_processor(df)
         xb = self.boost_data_processor(df)
+        xw = self.wildwood_data_processor(df)
         xn = self.nn_data_processor(df)
         xnc = self.nnc_data_processor(df)
         xeim = self.eim_data_processor(df)
@@ -425,6 +455,8 @@ class NeuralNetEnsembler(BaseEnsembler):
             rm = self.ridge_regressors[k].predict(xr)
             rl, ru = self.ridge_regressors[k].predict_intervals(xr)
             hl, hu = self.histboosters[k].predict_intervals(xb)
+            wm = self.wildwood_regressors[k].regressor.predict(xw)
+            wl, wu = self.wildwood_regressors[k].predict_intervals(xw)
             nc, ns, nk, nt = self.nn_regressors[k].model(xn).numpy().T
             nl, nu = self.nn_regressors[k].predict_intervals(xn)
             nncm = self.nnc_data_processor.bin_values[
@@ -440,6 +472,9 @@ class NeuralNetEnsembler(BaseEnsembler):
                     ru.reshape((-1, 1)) / SOFTPLUS_SCALE,
                     hl.reshape((-1, 1)) / SOFTPLUS_SCALE,
                     hu.reshape((-1, 1)) / SOFTPLUS_SCALE,
+                    wl.reshape((-1, 1)) / SOFTPLUS_SCALE,
+                    wm.reshape((-1, 1)) / SOFTPLUS_SCALE,
+                    wu.reshape((-1, 1)) / SOFTPLUS_SCALE,
                     nc.reshape((-1, 1)),
                     ns.reshape((-1, 1)),
                     nk.reshape((-1, 1)),

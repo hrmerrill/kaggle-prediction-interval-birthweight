@@ -16,9 +16,9 @@ class Validator:
         Parameters
         ----------
         model_type: str
-            one of RidgeRegressor, HistBoostRegressor, MissingnessNeuralNetRegressor,
-            MissingnessNeuralNetEIM, MissingnessNeuralNetClassifier,
-            HistBoostEnsembler, or NeuralNetEnsembler
+            one of RidgeRegressor, HistBoostRegressor, WildWoodRegressor,
+            MissingnessNeuralNetRegressor, MissingnessNeuralNetEIM,
+            MissingnessNeuralNetClassifier, HistBoostEnsembler, or NeuralNetEnsembler
         n_folds: int
             number of folds over which to cross-validate
         **kwargs: dict
@@ -42,13 +42,13 @@ class Validator:
         df = df.copy()
         df["cv_fold"] = np.random.choice(self.n_folds, df.shape[0])
 
-        # Since the HistBoostRegressor requires the categorical feature mask at instantiation,
+        # Since the tree-based models require the categorical feature mask at instantiation,
         # create a dummy data processor here to obtain it
-        if self.model_type == "HistBoostRegressor":
-            throw_away_data_processor = DataProcessor("HistBoostRegressor")
+        if self.model_type in ["HistBoostRegressor", "WildWoodRegressor"]:
+            throw_away_data_processor = DataProcessor(self.model_type)
             _ = throw_away_data_processor(df)
             self.models = [
-                kaggle_models.HistBoostRegressor(
+                getattr(kaggle_models, self.model_type)(
                     categorical_feature_mask=throw_away_data_processor.categorical_features,
                     **self.kwargs,
                 )

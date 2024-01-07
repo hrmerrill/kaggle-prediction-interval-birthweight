@@ -23,6 +23,7 @@ typer = {extras = ["all"], version = "^0.9.0"}
 mapie = "^0.7.0"
 tensorflow-io-gcs-filesystem = "<=0.34.0"
 scikit-optimize = "^0.9.0"
+wildwood = "^0.3"
 
 [build-system]
 requires = ["poetry-core"]
