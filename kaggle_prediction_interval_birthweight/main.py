@@ -3,6 +3,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import typer
+from tensorflow.random import set_seed
 
 from kaggle_prediction_interval_birthweight.model.hist_gradient_boosting import HistBoostRegressor
 from kaggle_prediction_interval_birthweight.model.neural_network import (
@@ -14,6 +15,10 @@ from kaggle_prediction_interval_birthweight.utils.utils import np_softplus_inv
 from kaggle_prediction_interval_birthweight.workflow.validation import Validator
 
 LOCAL_DIR = "~/dev/data/kaggle-prediction-interval-birthweight/"
+
+# for reproducibility
+np.random.seed(42)
+set_seed(42)
 
 
 app = typer.Typer()
