@@ -21,9 +21,9 @@ typer = {extras = ["all"], version = "^0.9.0"}
 mapie = "^0.7.0"
 scikit-optimize = "^0.9.0"
 wildwood = "^0.3"
-tensorflow = ">=2.14.0,<2.15.0"
 tensorflow-metal = ">=1.1.0"
 tensorflow-io-gcs-filesystem = "0.34.0"
+tensorflow-macos = "^2.15.0"
 
 [build-system]
 requires = ["poetry-core"]
