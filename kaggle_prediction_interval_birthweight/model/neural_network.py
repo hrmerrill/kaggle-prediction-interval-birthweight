@@ -131,7 +131,7 @@ class MissingnessNeuralNetRegressor:
 
         self.model = tf.keras.models.Model(inputs=inputs, outputs=output_layer)
         self.model.compile(
-            optimizer=tf.keras.optimizers.Adam(
+            optimizer=tf.keras.optimizers.legacy.Adam(
                 learning_rate=tf.optimizers.schedules.CosineDecay(
                     initial_learning_rate=0.0001,
                     warmup_target=0.0003,
@@ -434,7 +434,7 @@ class MissingnessNeuralNetClassifier:
         probs = tf.keras.layers.Dense(units=len(self.bin_values), activation="softmax")(next_output)
         self.model = tf.keras.models.Model(inputs=inputs, outputs=probs)
         self.model.compile(
-            optimizer=tf.keras.optimizers.Adam(
+            optimizer=tf.keras.optimizers.legacy.Adam(
                 learning_rate=tf.optimizers.schedules.CosineDecay(
                     initial_learning_rate=0.0001,
                     warmup_target=0.0003,
@@ -630,7 +630,7 @@ class MissingnessNeuralNetEIM:
             + (y + upper_boundary - p_y[:, 1]) ** 2
             + tf.math.abs(y - p_y[:, 2])
         )
-        blank_model.compile(optimizer=tf.keras.optimizers.Adam(0.003), loss=warmup_loss)
+        blank_model.compile(optimizer=tf.keras.optimizers.legacy.Adam(0.003), loss=warmup_loss)
         blank_model.fit(
             x=tf.convert_to_tensor(x_train),
             y=tf.convert_to_tensor(y_train),
@@ -649,7 +649,7 @@ class MissingnessNeuralNetEIM:
             return eim_loss(y, p_y, alpha=self.alpha)
 
         self.model.compile(
-            optimizer=tf.keras.optimizers.Adam(
+            optimizer=tf.keras.optimizers.legacy.Adam(
                 learning_rate=tf.optimizers.schedules.CosineDecay(
                     initial_learning_rate=0.0001,
                     warmup_target=0.0003,
