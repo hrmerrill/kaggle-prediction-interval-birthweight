@@ -61,6 +61,15 @@ def create_submission(
     test_data[["id"]].assign(pi_lower=lower, pi_upper=upper).to_csv(output_path, index=False)
     print("Submission file saved to: \n" + output_path)
 
+    # save predictions on training sets too, so they can be ensembled later
+    fitted_path = LOCAL_DIR + f"fitted_{model_type}.csv"
+    lower_train, upper_train = validator.predict_intervals(train_data)
+    fitted_data = train_data[["id"]].copy()
+    fitted_data[f"lower_{model_type}"] = lower_train
+    fitted_data[f"upper_{model_type}"] = upper_train
+    fitted_data.to_csv(fitted_path, index=False)
+    print("Fitted file saved to: \n" + fitted_path)
+
 
 @app.command()
 def create_hail_mary_submission(
