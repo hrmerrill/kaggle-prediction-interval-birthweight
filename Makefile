@@ -24,3 +24,14 @@ firedrill:
 	git add .
 	git commit -m "saving work"
 	git push origin main
+
+run:
+	poetry run kaggle-prediction-interval-birthweight create-submission RidgeRegressor
+	poetry run kaggle-prediction-interval-birthweight create-submission HistBoostRegressor
+	poetry run kaggle-prediction-interval-birthweight create-submission WildWoodRegressor
+	poetry run kaggle-prediction-interval-birthweight create-submission MissingnessNeuralNetRegressor
+	poetry run kaggle-prediction-interval-birthweight create-submission MissingnessNeuralNetClassifier
+	poetry run kaggle-prediction-interval-birthweight create-submission MissingnessNeuralNetEIM
+	poetry run kaggle-prediction-interval-birthweight create-submission HistBoostEnsembler
+	poetry run kaggle-prediction-interval-birthweight create-submission NeuralNetEnsembler
+	poetry run kaggle-prediction-interval-birthweight create-hail-mary-submission

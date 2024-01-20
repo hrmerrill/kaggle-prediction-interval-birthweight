@@ -79,6 +79,8 @@ def create_hail_mary_submission(
     """
     Create a submission that ensembles all model types.
 
+    Requires all models have already been run with `create_submission` above.
+
     Parameters
     ----------
     train_data_path: str
@@ -86,9 +88,6 @@ def create_hail_mary_submission(
     test_data_path: str
         path to test data
     """
-    train_data = pd.read_csv(train_data_path)
-    test_data = pd.read_csv(test_data_path)
-
     all_types = [
         "RidgeRegressor",
         "HistBoostRegressor",
@@ -99,34 +98,23 @@ def create_hail_mary_submission(
         "HistBoostEnsembler",
         "NeuralNetEnsembler",
     ]
-    train_ensemble, test_ensemble = [], []
+    all_features = ["lower_" + m for m in all_types] + ["upper_" + m for m in all_types]
+    train_data = pd.read_csv(train_data_path)[["id", "DBWT"]]
+    test_data = pd.read_csv(test_data_path)[["id"]]
+
     for model_type in all_types:
-        print(f"Beginning training the {model_type}:")
-        validator = Validator(model_type)
-        validator.fit(train_data)
+        model_outputs_train = pd.read_csv(LOCAL_DIR + f"fitted_{model_type}.csv")
+        train_data = train_data.merge(model_outputs_train, on="id", how="inner", validate="1:1")
 
-        print(f"{model_type} performance:")
-        validator.print_performance_summary()
-
-        lower_train, upper_train = validator.predict_intervals(train_data)
-        lower_test, upper_test = validator.predict_intervals(test_data)
-
-        test_data[["id"]].assign(pi_lower=lower_test, pi_upper=upper_test).to_csv(
-            LOCAL_DIR + f"submission_{model_type}.csv", index=False
+        model_outputs_test = pd.read_csv(LOCAL_DIR + f"submission_{model_type}.csv")
+        model_outputs_test = model_outputs_test.rename(
+            columns={"pi_lower": f"lower_{model_type}", "pi_upper": f"upper_{model_type}"}
         )
-        print("Submission file saved to: \n" + LOCAL_DIR + f"submission_{model_type}.csv")
+        test_data = test_data.merge(model_outputs_test, on="id", how="inner", validate="1:1")
 
-        train_ensemble = train_ensemble + [
-            lower_train / SOFTPLUS_SCALE,
-            upper_train / SOFTPLUS_SCALE,
-        ]
-        test_ensemble = test_ensemble + [lower_test / SOFTPLUS_SCALE, upper_test / SOFTPLUS_SCALE]
-
-        print(f"{model_type} complete.")
-
-    train_ensemble = np.hstack([x.reshape((-1, 1)) for x in train_ensemble])
-    test_ensemble = np.hstack([x.reshape((-1, 1)) for x in test_ensemble])
-    train_y = np_softplus_inv(train_data["DBWT"] / SOFTPLUS_SCALE)
+    train_ensemble = train_data[all_features].values / SOFTPLUS_SCALE
+    test_ensemble = test_data[all_features].values / SOFTPLUS_SCALE
+    train_y = np_softplus_inv(train_data["DBWT"].values / SOFTPLUS_SCALE)
 
     print("Training the hail mary wildwood regressor.")
     model_ww = WildWoodRegressor()
