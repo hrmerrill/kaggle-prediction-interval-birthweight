@@ -53,7 +53,11 @@ def create_submission(
     train_data = pd.read_csv(train_data_path)
     test_data = pd.read_csv(test_data_path)
 
-    validator = Validator(model_type)
+    # to avoid out-of-memory errors
+    if model_type == "NeuralNetEnsembler":
+        validator = Validator(model_type, units_list=[100])
+    else:
+        validator = Validator(model_type)
     validator.fit(train_data)
     validator.print_performance_summary()
 
@@ -137,7 +141,9 @@ def create_hail_mary_submission(
     print("Submission file saved to: \n" + LOCAL_DIR + "submission_hail_mary_hb.csv")
 
     print("Training the hail mary neural network.")
-    model_nn = MissingnessNeuralNetRegressor(bayesian=True, fit_tail=False)
+    model_nn = MissingnessNeuralNetRegressor(
+        bayesian=True, fit_tail=False, units_list=[50, 10], dropout_rate=0.1
+    )
     model_nn.fit(train_ensemble, train_y)
     lower_nn, upper_nn = model_nn.predict_intervals(test_ensemble, alpha=0.9, n_samples=2000)
 
