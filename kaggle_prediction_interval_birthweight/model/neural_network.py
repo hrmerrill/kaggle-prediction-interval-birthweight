@@ -176,7 +176,7 @@ class MissingnessNeuralNetRegressor:
         )
 
     def predict_intervals(
-        self, X: np.ndarray, alpha: float = 0.9, n_samples: int = 1000
+        self, X: np.ndarray, alpha: float = 0.9, n_samples: int = 500
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Predict the alpha * 100% interval for birthweight.

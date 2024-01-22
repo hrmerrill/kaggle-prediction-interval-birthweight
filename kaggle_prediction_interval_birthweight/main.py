@@ -55,7 +55,7 @@ def create_submission(
 
     # to avoid out-of-memory errors
     if model_type == "NeuralNetEnsembler":
-        validator = Validator(model_type, units_list=[100])
+        validator = Validator(model_type, units_list=[50])
     else:
         validator = Validator(model_type)
     validator.fit(train_data)
