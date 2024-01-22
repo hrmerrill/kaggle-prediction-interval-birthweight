@@ -419,7 +419,7 @@ class NeuralNetEnsembler(BaseEnsembler):
         self.neural_net.fit(x_ens, y_ens)
 
     def predict_intervals(
-        self, df: pd.DataFrame, alpha: float = 0.9, n_samples: int = 1000
+        self, df: pd.DataFrame, alpha: float = 0.9, n_samples: int = 200
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
                 Predict the alpha * 100% interval for birthweight.
