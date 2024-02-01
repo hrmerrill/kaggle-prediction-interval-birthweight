@@ -17,8 +17,8 @@ from kaggle_prediction_interval_birthweight.workflow.validation import Validator
 LOCAL_DIR = "~/dev/data/kaggle-prediction-interval-birthweight/"
 
 # for reproducibility
-np.random.seed(1)
-set_seed(1)
+np.random.seed(42)
+set_seed(42)
 
 
 app = typer.Typer()

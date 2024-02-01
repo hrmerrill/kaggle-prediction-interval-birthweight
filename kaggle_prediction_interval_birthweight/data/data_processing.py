@@ -58,6 +58,57 @@ class DataProcessor:
         self.feature_categories = feature_categories
         self.nondegenerate_columns = None
 
+    def _handle_three_related_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Handle the ILOP_R, ILP_R, and ILLB_R features.
+
+        These features are related and have complex types:
+        ILP_R: Interval since last pregnancy.
+            0-3:   Pleural delivery
+            4-300: Months since last live birth
+            888:   Not applicable / this is the 1st pregnancy
+            999:   Missing / unknown
+        ILOP_R: Interval since last other pregnancy.
+            0-3:   Pleural delivery
+            4-300: Months since last other live birth
+            888:   Not applicable / this is the 1st pregnancy
+            999:   Missing / unknown
+        ILLB_R: Interval since last live birth.
+            0-3:   Pleural delivery
+            4-300: Months since last live birth
+            888:   Not applicable / this is the 1st pregnancy
+            999:   Missing / unknown
+
+        I'll categorize ILP_R and ILOP_R. ILLB_R is log-transformed later. This should capture
+        complex missingness types and avoid colinearity problems.
+
+        Parameters
+        ----------
+        df: pd.DataFrame
+            The input data frame
+
+        Returns
+        -------
+        pd.DataFrame
+            The same data frame with processed ILOP_R, ILP_R, and ILLB_R features.
+        """
+        df = df.copy()
+
+        def categorize_vars(x):
+            return np.where(
+                x == 888,
+                "not applicable",
+                np.where(
+                    x == 999,
+                    "999",
+                    np.where(x <= 3, "pleural", np.where(x <= 6, "early", "normal")),
+                ),
+            )
+
+        df["ILP_R"] = categorize_vars(df["ILP_R"])
+        df["ILOP_R"] = categorize_vars(df["ILOP_R"])
+        return df
+
     def _enforce_feature_types(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Enforce feature types.
@@ -129,8 +180,9 @@ class DataProcessor:
                 [self.missing_timestamp_code] if feature == TIMESTAMP_COL_NAME else missing_code
             )
 
-            # for linear regression, impute with something reasonable-- medians and modes.
-            if self.model_type == "RidgeRegressor":
+            # for linear regression and EIM, impute with something reasonable-- medians and modes.
+            # (linear regression requires it, and I want to decorrelate inputs for EIM)
+            if self.model_type in ["RidgeRegressor", "MissingnessNeuralNetEIM"]:
                 if "categorical" in VARIABLE_TYPE[feature]:
                     replacement = df.loc[~df[feature].isin(missing_code), feature].mode()
                 else:
@@ -141,7 +193,6 @@ class DataProcessor:
             elif self.model_type in [
                 "MissingnessNeuralNetRegressor",
                 "MissingnessNeuralNetClassifier",
-                "MissingnessNeuralNetEIM",
                 "HistBoostRegressor",
                 "WildWoodRegressor",
             ]:
@@ -165,15 +216,7 @@ class DataProcessor:
             The data frame with removed and binarized columns.
         """
         df = df.copy()
-        # during the EDA, we decided to drop these
-        keepers = list(set(VARIABLE_TYPE.keys()) - {"PAY", "ILP_R"})
-        df = df.drop(["PAY", "ILP_R"], axis=1)
-
-        # we also added a polynomial effect for one (transformed) feature
-        df["ILOP_R"] = np.log(df["ILOP_R"] + 0.1)
-        df["ILOP_R_2"] = df["ILOP_R"] ** 2
-        df["ILOP_R_3"] = df["ILOP_R"] ** 3
-        keepers = keepers + ["ILOP_R_2", "ILOP_R_3"]
+        keepers = list(set(VARIABLE_TYPE.keys()))
 
         # make gestation period explicit
         gestation_guess = 9 if self.model_type == "RidgeRegressor" else np.nan
@@ -229,8 +272,8 @@ class DataProcessor:
 
         x_numeric = df[self.numeric_features].values
 
-        # for the linear regression, we will decorrelate the continuous features
-        if self.model_type == "RidgeRegressor":
+        # for the linear regression and EIM, we will decorrelate the continuous features
+        if self.model_type in ["RidgeRegressor", "MissingnessNeuralNetEIM"]:
             if self.standardization_parameters is None:
                 self.standardization_parameters = {}
                 self.standardization_parameters["means"] = x_numeric.mean(axis=0)
@@ -249,7 +292,6 @@ class DataProcessor:
         elif self.model_type in [
             "MissingnessNeuralNetRegressor",
             "MissingnessNeuralNetClassifier",
-            "MissingnessNeuralNetEIM",
         ]:
             if self.standardization_parameters is None:
                 self.standardization_parameters = {}
@@ -266,7 +308,6 @@ class DataProcessor:
         if self.model_type in [
             "MissingnessNeuralNetRegressor",
             "MissingnessNeuralNetClassifier",
-            "MissingnessNeuralNetEIM",
         ]:
             num_missing = np.isnan(x_numeric).sum(axis=1).reshape(-1, 1)
             x_numeric = np.hstack([x_numeric, num_missing])
@@ -327,7 +368,6 @@ class DataProcessor:
                 if self.model_type in [
                     "MissingnessNeuralNetRegressor",
                     "MissingnessNeuralNetClassifier",
-                    "MissingnessNeuralNetEIM",
                 ]:
                     x_one_hot_col = x_one_hot_col * np.where(
                         df[feature].isna(), np.nan, 1.0
@@ -351,6 +391,7 @@ class DataProcessor:
             the design matrix X and the response variable y, if present.
         """
         df = df.copy()
+        df = self._handle_three_related_features(df)
         df = self._enforce_feature_types(df)
         df = self._process_missing_data(df)
         df = self._subset_and_binarize(df)
