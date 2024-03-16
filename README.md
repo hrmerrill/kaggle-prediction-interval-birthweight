@@ -14,15 +14,15 @@ The following models are implemented in this package:
 
 1. Simple L2-regularized linear regression (i.e., ridge regression)
 2. Tree-based models:
-   a. [Wildwood](https://wildwood.readthedocs.io/en/latest/index.html), an extension of random forests in which predictions come from ensembling all possible subtrees
-   b. Histogram-based gradient boosting
+   - [Wildwood](https://wildwood.readthedocs.io/en/latest/index.html), an extension of random forests in which predictions come from ensembling all possible subtrees
+   - Histogram-based gradient boosting
 3. Neural network models:
-   a. A regressor that fits the four-parameter sinh-arcsinh distribution to the data (optionally Bayesian)
-   b. A classifier that predicts binned birthweights
-   c. An interval predictor based on [Expanded Interval Minimalization](https://arxiv.org/abs/1806.11222)
+   - A regressor that fits the four-parameter sinh-arcsinh distribution to the data (optionally Bayesian)
+   - A classifier that predicts binned birthweights
+   - An interval predictor based on [Expanded Interval Minimalization](https://arxiv.org/abs/1806.11222)
 4. Ensemblers:
-   a. Histogram-based gradient boosting
-   b. The sinh-arcsinh neural network described above.
+   - Histogram-based gradient boosting
+   - The sinh-arcsinh neural network described above.
 
 Many of these models use [Mapie](https://mapie.readthedocs.io/en/latest/) in a post-processing step to calibrate the predicted intervals. For each model, predictions on the kaggle test set are made by ensembling predictions from each trained model in the cross-validation process on the training set in order to reduce overfitting. The predictors in the ensemblers consist of the original feature set in addition to predictions from the models. The predictions from the models used as predictors in the ensembler are made on left-out folds to avoid data leakage caused by training on the same data twice. A final set of "hail mary" ensemblers are implemented to ensemble the models and ensembles together. The original feature set is excluded from this second-level ensembling. There is data leakage in this final set of ensemblers (and, as expected, they overfit).
 
