@@ -6,7 +6,7 @@
 
 ## Overview
 
-This repo contains code for the [birth weight prediction interval Kaggle competition](https://www.kaggle.com/competitions/prediction-interval-competition-i-birth-weight/overview). A python package and a command line interface (CLI) are available for data processing, model training, and cross-validating prediction intervals of birth weights. Functionality is also available for tuning the hyperparameters of the tree-based and neural network models.
+This repo contains code for the [birth weight prediction interval Kaggle competition](https://www.kaggle.com/competitions/prediction-interval-competition-i-birth-weight/overview). A python package and a command line interface (CLI) are available for data processing, model training, and cross-validating prediction intervals of birth weights. Functionality is also available for tuning the hyperparameters of the tree-based and neural network models. The `HistBoostEnsembler` submission placed 7th out of 92.
 
 ## Implemented models
 
@@ -21,7 +21,7 @@ The following models are implemented in this package:
    - A classifier that predicts binned birthweights
    - An interval predictor based on [Expanded Interval Minimalization](https://arxiv.org/abs/1806.11222)
 4. Ensemblers:
-   - Histogram-based gradient boosting
+   - **Histogram-based gradient boosting** (this was the best method implemented)
    - The sinh-arcsinh neural network described above.
 
 Many of these models use [Mapie](https://mapie.readthedocs.io/en/latest/) in a post-processing step to calibrate the predicted intervals. For each model, predictions on the kaggle test set are made by ensembling predictions from each trained model in the cross-validation process on the training set in order to reduce overfitting. The predictors in the ensemblers consist of the original feature set in addition to predictions from the models. The predictions from the models used as predictors in the ensembler are made on left-out folds to avoid data leakage caused by training on the same data twice. A final set of "hail mary" ensemblers are implemented to ensemble the models and ensembles together. The original feature set is excluded from this second-level ensembling. There is data leakage in this final set of ensemblers (and, as expected, they overfit).
